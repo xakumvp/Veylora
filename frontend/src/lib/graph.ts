@@ -1,5 +1,31 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { KeyValueRow, NodeDefinition, Params, VNodeData, WorkflowDocument } from '../types';
+import type {
+  KeyValueRow,
+  NodeDefinition,
+  NodeSettings,
+  Params,
+  VNodeData,
+  WorkflowDocument,
+  WorkflowSettings,
+  WorkflowVariable,
+} from '../types';
+
+export const DEFAULT_NODE_SETTINGS: NodeSettings = {
+  retry: { maxAttempts: 1, delayMs: 1000, backoff: false, maxDelayMs: 0 },
+  timeoutSec: 0,
+  onError: 'stop',
+};
+
+/** Variables the engine provides to every run. */
+export const SYSTEM_VARIABLES = [
+  { path: 'execution.id', description: 'ID выполнения' },
+  { path: 'execution.startedAt', description: 'Время старта' },
+  { path: 'execution.trigger', description: 'Источник запуска' },
+  { path: 'workflow.id', description: 'ID Workflow' },
+  { path: 'workflow.name', description: 'Название Workflow' },
+];
+
+export const RESERVED_KEYS = new Set(['execution', 'workflow', 'variables', 'env']);
 
 export const SCHEMA_VERSION = 1;
 export const NODE_TYPE = 'veylora';
@@ -20,7 +46,7 @@ export function fromDocument(doc: WorkflowDocument): { nodes: FlowNode[]; edges:
     id: n.id,
     type: NODE_TYPE,
     position: { x: n.position?.x ?? 0, y: n.position?.y ?? 0 },
-    data: { nodeType: n.type, name: n.name, key: n.key, params: n.params ?? {} },
+    data: { nodeType: n.type, name: n.name, key: n.key, params: n.params ?? {}, settings: n.settings },
   }));
   const edges: Edge[] = (doc.edges ?? []).map((e) => ({
     id: e.id,
@@ -36,16 +62,21 @@ export function fromDocument(doc: WorkflowDocument): { nodes: FlowNode[]; edges:
 export function toDocument(
   nodes: FlowNode[],
   edges: Edge[],
-  viewport?: { x: number; y: number; zoom: number },
+  viewport: { x: number; y: number; zoom: number } | undefined,
+  variables: WorkflowVariable[],
+  settings: WorkflowSettings,
 ): WorkflowDocument {
   return {
     schemaVersion: SCHEMA_VERSION,
+    variables,
+    settings,
     nodes: nodes.map((n) => ({
       id: n.id,
       type: n.data.nodeType,
       name: n.data.name,
       key: n.data.key,
       params: n.data.params,
+      settings: n.data.settings,
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     })),
     edges: edges.map((e) => ({

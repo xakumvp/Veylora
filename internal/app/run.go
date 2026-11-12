@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
+	"os"
 	"sync"
+	"time"
 
 	"veylora/internal/engine"
 	"veylora/internal/events"
@@ -15,43 +18,102 @@ import (
 const maxLogsPerRun = 5000
 
 // RunWorkflow validates and starts the given graph (the editor's current state).
+// triggerNodeID selects the trigger to start from ("" = Manual Trigger or the first trigger).
 // It returns the run ID; progress arrives through events.
-func (a *App) RunWorkflow(workflowID string, doc workflow.Document) (string, error) {
+func (a *App) RunWorkflow(workflowID string, doc workflow.Document, triggerNodeID string) (string, error) {
 	s, err := a.db()
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.GetWorkflow(a.ctx, workflowID); err != nil {
+	w, err := s.GetWorkflow(a.ctx, workflowID)
+	if err != nil {
 		return "", a.userError("запуск", err)
 	}
-	st, err := s.GetSettings(a.ctx)
-	if err != nil {
-		st = storage.DefaultSettings()
-	}
 	doc.Normalize()
-	sink := &runSink{app: a, store: s, emitter: events.WailsEmitter{Ctx: a.ctx}, keep: st.KeepExecutions}
-	id, err := a.runs.Start(engine.Request{
-		WorkflowID: workflowID,
-		Doc:        doc,
-		Env: nodes.Env{
-			AllowLocalNetwork: st.AllowLocalNetwork,
-			MaxResponseBytes:  int64(st.MaxResponseMB) << 20,
-		},
-	}, sink)
+	id, err := a.startRun(w.WorkflowMeta, doc, triggerNodeID, nodes.TriggerEvent{Source: nodes.TriggerManual})
 	if err != nil {
 		return "", a.userError("запуск", err)
 	}
 	return id, nil
 }
 
-// StopWorkflow cancels the active run. Returns false if nothing was running.
-func (a *App) StopWorkflow() bool {
-	return a.runs.Stop()
+// startRun builds an engine request from current settings and launches it.
+func (a *App) startRun(meta storage.WorkflowMeta, doc workflow.Document, triggerNodeID string, ev nodes.TriggerEvent) (string, error) {
+	s, err := a.db()
+	if err != nil {
+		return "", err
+	}
+	st, err := s.GetSettings(a.ctx)
+	if err != nil {
+		st = storage.DefaultSettings()
+	}
+	a.runs.SetMaxConcurrent(st.MaxConcurrentRuns)
+	envVars := map[string]string{}
+	for _, name := range st.AllowedEnvVars {
+		if v, ok := os.LookupEnv(name); ok {
+			envVars[name] = v
+		}
+	}
+	sink := &runSink{app: a, store: s, emitter: a.emitter(), keep: st.KeepExecutions}
+	return a.runs.Start(engine.Request{
+		WorkflowID:    meta.ID,
+		WorkflowName:  meta.Name,
+		Doc:           doc,
+		TriggerNodeID: triggerNodeID,
+		Event:         ev,
+		EnvVars:       envVars,
+		Env: nodes.Env{
+			AllowLocalNetwork:  st.AllowLocalNetwork,
+			MaxResponseBytes:   int64(st.MaxResponseMB) << 20,
+			AllowedDirectories: st.AllowedDirectories,
+		},
+	}, sink)
 }
 
-// GetActiveRun returns the ID of the running workflow or "".
-func (a *App) GetActiveRun() string {
-	return a.runs.ActiveRunID()
+// fireTrigger is called by the scheduler when an automatic trigger is due.
+// It always runs the latest saved version of the workflow.
+func (a *App) fireTrigger(workflowID, nodeID string, ev nodes.TriggerEvent) {
+	s, err := a.db()
+	if err != nil {
+		return
+	}
+	ctx := context.Background()
+	w, err := s.GetWorkflow(ctx, workflowID)
+	if err != nil {
+		a.logger.Warn("trigger: workflow not found", "workflow", workflowID, "error", err)
+		a.sched.Deactivate(workflowID)
+		return
+	}
+	if !w.Active {
+		a.sched.Deactivate(workflowID)
+		return
+	}
+	if err := s.RecordTriggerFired(ctx, workflowID, nodeID, time.Now().UnixMilli()); err != nil {
+		a.logger.Warn("record trigger", "error", err)
+	}
+	if _, err := a.startRun(w.WorkflowMeta, w.Document, nodeID, ev); err != nil {
+		level := "warn"
+		if !errors.Is(err, engine.ErrAlreadyRunning) && !errors.Is(err, engine.ErrTooManyRuns) {
+			level = "error"
+		}
+		a.logger.Warn("trigger skipped", "workflow", workflowID, "node", nodeID, "source", ev.Source, "level", level, "error", err)
+		a.emitter().Emit(events.TriggerSkipped, map[string]any{"workflowId": workflowID, "nodeId": nodeID, "reason": err.Error()})
+	}
+}
+
+// StopRun cancels one run. Returns false if it is not running.
+func (a *App) StopRun(runID string) bool {
+	return a.runs.Stop(runID)
+}
+
+// StopWorkflow cancels the active run of a workflow. Returns false if nothing was running.
+func (a *App) StopWorkflow(workflowID string) bool {
+	return a.runs.StopWorkflow(workflowID)
+}
+
+// GetActiveRuns lists runs in progress.
+func (a *App) GetActiveRuns() []engine.ActiveRun {
+	return a.runs.Active()
 }
 
 // ListExecutions returns the latest runs of a workflow.
@@ -60,7 +122,7 @@ func (a *App) ListExecutions(workflowID string) ([]storage.Execution, error) {
 	if err != nil {
 		return nil, err
 	}
-	ex, err := s.ListExecutions(a.ctx, workflowID, 100)
+	ex, err := s.ListExecutions(a.ctx, workflowID, 200)
 	return ex, a.userError("загрузка истории", err)
 }
 
@@ -79,6 +141,9 @@ func (a *App) ClearExecutions(workflowID string) error {
 	s, err := a.db()
 	if err != nil {
 		return err
+	}
+	if a.runs.IsRunning(workflowID) {
+		return errors.New("дождитесь окончания выполнения")
 	}
 	return a.userError("очистка истории", s.ClearExecutions(a.ctx, workflowID))
 }
@@ -135,6 +200,6 @@ func (r *runSink) RunFinished(ev events.RunEvent) {
 	if err := r.store.PruneExecutions(ctx, ev.WorkflowID, r.keep); err != nil {
 		r.app.logger.Warn("prune executions", "error", err)
 	}
-	r.app.logger.Info("run finished", "run", ev.RunID, "status", ev.Status, "durationMs", ev.DurationMs)
+	r.app.logger.Info("run finished", "run", ev.RunID, "status", ev.Status, "trigger", ev.Trigger, "durationMs", ev.DurationMs)
 	r.emitter.Emit(events.RunFinished, ev)
 }

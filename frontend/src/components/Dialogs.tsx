@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Info, ShieldAlert, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FolderPlus, Info, ShieldAlert, X, XCircle } from 'lucide-react';
+import { api } from '../services/api';
 import { useUI } from '../stores/ui';
 import { useWorkspace } from '../stores/workspace';
 import type { Settings } from '../types';
@@ -80,10 +81,14 @@ function SettingsDialog() {
   const settings = useWorkspace((s) => s.settings);
   const saveSettings = useWorkspace((s) => s.saveSettings);
   const [draft, setDraft] = useState<Settings | undefined>(settings);
+  const [envText, setEnvText] = useState('');
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
     setWasOpen(open);
-    if (open) setDraft(settings);
+    if (open) {
+      setDraft(settings);
+      setEnvText((settings?.allowedEnvVars ?? []).join(', '));
+    }
   }
   if (!open || !draft) return null;
 
@@ -100,7 +105,13 @@ function SettingsDialog() {
           <Button
             variant="primary"
             onClick={async () => {
-              await saveSettings(draft);
+              await saveSettings({
+                ...draft,
+                allowedEnvVars: envText
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter(Boolean),
+              });
               setOpen(false);
             }}
           >
@@ -162,6 +173,94 @@ function SettingsDialog() {
             value={draft.keepExecutions}
             onChange={(e) => setDraft({ ...draft, keepExecutions: Number(e.target.value) })}
             mono
+          />
+        </label>
+        <label className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-[13px] font-medium">Одновременных запусков</div>
+            <p className="mt-1 text-xs text-muted">Сколько Workflow могут выполняться параллельно (1–16).</p>
+          </div>
+          <Input
+            type="number"
+            min={1}
+            max={16}
+            className="w-20"
+            value={draft.maxConcurrentRuns}
+            onChange={(e) => setDraft({ ...draft, maxConcurrentRuns: Number(e.target.value) })}
+            mono
+          />
+        </label>
+        <div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-[13px] font-medium">Разрешённые каталоги</div>
+              <p className="mt-1 text-xs text-muted">
+                File Watcher и будущие файловые Nodes работают только внутри этих каталогов.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              icon={<FolderPlus size={13} />}
+              onClick={async () => {
+                const dir = await api.pickDirectory('Разрешить доступ к каталогу');
+                if (dir) setDraft({ ...draft, allowedDirectories: [...draft.allowedDirectories, dir] });
+              }}
+            >
+              Добавить
+            </Button>
+          </div>
+          <ul className="mt-2 flex flex-col gap-1">
+            {draft.allowedDirectories.map((d, i) => (
+              <li
+                key={d + i}
+                className="flex items-center gap-2 rounded-md border border-line bg-bg px-2 py-1"
+              >
+                <span
+                  className="selectable min-w-0 flex-1 truncate font-mono text-[11px] text-muted"
+                  title={d}
+                >
+                  {d}
+                </span>
+                <button
+                  className="text-faint hover:text-error"
+                  aria-label="Удалить каталог"
+                  onClick={() =>
+                    setDraft({
+                      ...draft,
+                      allowedDirectories: draft.allowedDirectories.filter((_, j) => j !== i),
+                    })
+                  }
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+            {draft.allowedDirectories.length === 0 && (
+              <li className="text-[11px] text-faint">
+                Нет разрешённых каталогов — файловые триггеры недоступны.
+              </li>
+            )}
+          </ul>
+        </div>
+        <label className="flex flex-col gap-1.5">
+          <div className="text-[13px] font-medium">Переменные окружения</div>
+          <p className="text-xs text-muted">
+            Имена через запятую. Только они будут доступны как {'{{env.ИМЯ}}'}.
+          </p>
+          <Input
+            value={envText}
+            placeholder="HOME, USERNAME"
+            mono
+            onChange={(e) => setEnvText(e.target.value)}
+            onBlur={() =>
+              setDraft({
+                ...draft,
+                allowedEnvVars: envText
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter(Boolean),
+              })
+            }
           />
         </label>
       </div>

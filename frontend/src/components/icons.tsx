@@ -1,8 +1,14 @@
 import {
+  AlarmClock,
   Box,
+  CalendarClock,
+  FolderSearch,
   GitBranch,
   Globe,
+  OctagonX,
   Play,
+  Power,
+  Repeat,
   ScrollText,
   Timer,
   type LucideIcon,
@@ -15,6 +21,12 @@ const byName: Record<string, LucideIcon> = {
   'git-branch': GitBranch,
   timer: Timer,
   'scroll-text': ScrollText,
+  'calendar-clock': CalendarClock,
+  repeat: Repeat,
+  'alarm-clock': AlarmClock,
+  'folder-search': FolderSearch,
+  power: Power,
+  'octagon-x': OctagonX,
 };
 
 /** Accent colour per category, used for node icons. */

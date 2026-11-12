@@ -67,10 +67,13 @@ function FlowCanvas() {
     return edges.map((e) => {
       const src = runNodes[e.source];
       const tgt = runNodes[e.target];
-      const taken = src?.status === 'SUCCESS' && (!src.branch || src.branch === e.sourceHandle);
+      const isErrorEdge = e.sourceHandle === 'error';
+      const taken = isErrorEdge
+        ? src?.status === 'FAILED' && src.branch === 'error'
+        : src?.status === 'SUCCESS' && (!src.branch || src.branch === e.sourceHandle);
       const skipped =
         tgt?.status === 'SKIPPED' ||
-        (src?.status === 'SUCCESS' && !!src.branch && src.branch !== e.sourceHandle);
+        (src?.status === 'SUCCESS' && (isErrorEdge || (!!src.branch && src.branch !== e.sourceHandle)));
       return {
         ...e,
         className: taken && !skipped ? 'taken' : skipped ? 'skipped' : undefined,

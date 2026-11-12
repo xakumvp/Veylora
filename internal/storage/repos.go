@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 
 	"veylora/internal/events"
 	"veylora/internal/workflow"
@@ -26,6 +27,7 @@ type WorkflowMeta struct {
 	ProjectID   string `json:"projectId"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Active      bool   `json:"active"`
 	CreatedAt   int64  `json:"createdAt"`
 	UpdatedAt   int64  `json:"updatedAt"`
 }
@@ -42,6 +44,8 @@ type Execution struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
 	Error      string `json:"error"`
+	Trigger    string `json:"trigger"`
+	TriggerID  string `json:"triggerNodeId"`
 	StartedAt  int64  `json:"startedAt"`
 	FinishedAt int64  `json:"finishedAt"`
 	DurationMs int64  `json:"durationMs"`
@@ -90,7 +94,7 @@ func (s *Store) DeleteProject(ctx context.Context, id string) error {
 
 // ListWorkflows returns workflows of a project, oldest first.
 func (s *Store) ListWorkflows(ctx context.Context, projectID string) ([]WorkflowMeta, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, name, description, created_at, updated_at FROM workflows WHERE project_id = ? ORDER BY created_at`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, name, description, active, created_at, updated_at FROM workflows WHERE project_id = ? ORDER BY created_at`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +102,7 @@ func (s *Store) ListWorkflows(ctx context.Context, projectID string) ([]Workflow
 	out := []WorkflowMeta{}
 	for rows.Next() {
 		var w WorkflowMeta
-		if err := rows.Scan(&w.ID, &w.ProjectID, &w.Name, &w.Description, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.ProjectID, &w.Name, &w.Description, &w.Active, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, w)
@@ -127,8 +131,8 @@ func (s *Store) CreateWorkflow(ctx context.Context, projectID, name, description
 func (s *Store) GetWorkflow(ctx context.Context, id string) (Workflow, error) {
 	var w Workflow
 	var data string
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, name, description, workflow_json, created_at, updated_at FROM workflows WHERE id = ?`, id).
-		Scan(&w.ID, &w.ProjectID, &w.Name, &w.Description, &data, &w.CreatedAt, &w.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, name, description, active, workflow_json, created_at, updated_at FROM workflows WHERE id = ?`, id).
+		Scan(&w.ID, &w.ProjectID, &w.Name, &w.Description, &w.Active, &data, &w.CreatedAt, &w.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workflow{}, ErrNotFound
 	}
@@ -158,6 +162,52 @@ func (s *Store) RenameWorkflow(ctx context.Context, id, name, description string
 	return affected(s.db.ExecContext(ctx, `UPDATE workflows SET name = ?, description = ?, updated_at = ? WHERE id = ?`, cleanName(name, "Workflow"), description, now(), id))
 }
 
+// SetWorkflowActive turns automatic triggers of a workflow on or off.
+func (s *Store) SetWorkflowActive(ctx context.Context, id string, active bool) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE workflows SET active = ? WHERE id = ?`, active, id))
+}
+
+// ListActiveWorkflowIDs returns IDs of workflows whose automatic triggers are enabled.
+func (s *Store) ListActiveWorkflowIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM workflows WHERE active = 1 ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// RecordTriggerFired remembers when a trigger last started a run.
+func (s *Store) RecordTriggerFired(ctx context.Context, workflowID, nodeID string, at int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO schedules (workflow_id, node_id, last_fired_at, fire_count) VALUES (?, ?, ?, 1)
+		ON CONFLICT(workflow_id, node_id) DO UPDATE SET last_fired_at = excluded.last_fired_at, fire_count = fire_count + 1`, workflowID, nodeID, at)
+	return err
+}
+
+// TriggerLastFired returns when a trigger last fired (0 if never).
+func (s *Store) TriggerLastFired(ctx context.Context, workflowID, nodeID string) (int64, error) {
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT last_fired_at FROM schedules WHERE workflow_id = ? AND node_id = ?`, workflowID, nodeID).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return at, err
+}
+
+// ResetTriggerState forgets fire history of a workflow (e.g. after its schedule was edited).
+func (s *Store) ResetTriggerState(ctx context.Context, workflowID, nodeID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM schedules WHERE workflow_id = ? AND node_id = ?`, workflowID, nodeID)
+	return err
+}
+
 // DeleteWorkflow removes a workflow and its executions.
 func (s *Store) DeleteWorkflow(ctx context.Context, id string) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM workflows WHERE id = ?`, id))
@@ -167,8 +217,8 @@ func (s *Store) DeleteWorkflow(ctx context.Context, id string) error {
 
 // CreateExecution records the start of a run.
 func (s *Store) CreateExecution(ctx context.Context, ev events.RunEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO executions (id, workflow_id, status, started_at) VALUES (?, ?, ?, ?)`,
-		ev.RunID, ev.WorkflowID, ev.Status, ev.StartedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO executions (id, workflow_id, status, trigger, trigger_node_id, started_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		ev.RunID, ev.WorkflowID, ev.Status, ev.Trigger, ev.TriggerID, ev.StartedAt)
 	return err
 }
 
@@ -191,7 +241,7 @@ func (s *Store) ListExecutions(ctx context.Context, workflowID string, limit int
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, workflow_id, status, error, started_at, COALESCE(finished_at, 0), duration_ms FROM executions WHERE workflow_id = ? ORDER BY started_at DESC LIMIT ?`, workflowID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, workflow_id, status, error, trigger, trigger_node_id, started_at, COALESCE(finished_at, 0), duration_ms FROM executions WHERE workflow_id = ? ORDER BY started_at DESC LIMIT ?`, workflowID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +249,7 @@ func (s *Store) ListExecutions(ctx context.Context, workflowID string, limit int
 	out := []Execution{}
 	for rows.Next() {
 		var e Execution
-		if err := rows.Scan(&e.ID, &e.WorkflowID, &e.Status, &e.Error, &e.StartedAt, &e.FinishedAt, &e.DurationMs); err != nil {
+		if err := rows.Scan(&e.ID, &e.WorkflowID, &e.Status, &e.Error, &e.Trigger, &e.TriggerID, &e.StartedAt, &e.FinishedAt, &e.DurationMs); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -262,14 +312,35 @@ func (s *Store) ListLogs(ctx context.Context, executionID string) ([]events.Log,
 
 // Settings are user preferences.
 type Settings struct {
-	AllowLocalNetwork bool `json:"allowLocalNetwork"`
-	MaxResponseMB     int  `json:"maxResponseMb"`
-	KeepExecutions    int  `json:"keepExecutions"`
+	AllowLocalNetwork  bool     `json:"allowLocalNetwork"`
+	MaxResponseMB      int      `json:"maxResponseMb"`
+	KeepExecutions     int      `json:"keepExecutions"`
+	MaxConcurrentRuns  int      `json:"maxConcurrentRuns"`
+	AllowedDirectories []string `json:"allowedDirectories"`
+	AllowedEnvVars     []string `json:"allowedEnvVars"`
 }
 
 // DefaultSettings returns the defaults used on first launch.
 func DefaultSettings() Settings {
-	return Settings{AllowLocalNetwork: false, MaxResponseMB: 5, KeepExecutions: 50}
+	return Settings{AllowLocalNetwork: false, MaxResponseMB: 5, KeepExecutions: 50, MaxConcurrentRuns: 4,
+		AllowedDirectories: []string{}, AllowedEnvVars: []string{}}
+}
+
+func cleanList(in []string, limit int) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[strings.ToLower(v)] {
+			continue
+		}
+		seen[strings.ToLower(v)] = true
+		out = append(out, v)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 // Clamp keeps settings within safe bounds.
@@ -286,6 +357,14 @@ func (st Settings) Clamp() Settings {
 	if st.KeepExecutions > 500 {
 		st.KeepExecutions = 500
 	}
+	if st.MaxConcurrentRuns < 1 {
+		st.MaxConcurrentRuns = 1
+	}
+	if st.MaxConcurrentRuns > 16 {
+		st.MaxConcurrentRuns = 16
+	}
+	st.AllowedDirectories = cleanList(st.AllowedDirectories, 50)
+	st.AllowedEnvVars = cleanList(st.AllowedEnvVars, 100)
 	return st
 }
 
@@ -313,6 +392,14 @@ func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 			if n, err := strconv.Atoi(v); err == nil {
 				st.KeepExecutions = n
 			}
+		case "maxConcurrentRuns":
+			if n, err := strconv.Atoi(v); err == nil {
+				st.MaxConcurrentRuns = n
+			}
+		case "allowedDirectories":
+			_ = json.Unmarshal([]byte(v), &st.AllowedDirectories)
+		case "allowedEnvVars":
+			_ = json.Unmarshal([]byte(v), &st.AllowedEnvVars)
 		}
 	}
 	return st.Clamp(), rows.Err()
@@ -326,10 +413,15 @@ func (s *Store) SaveSettings(ctx context.Context, st Settings) (Settings, error)
 		return st, err
 	}
 	defer tx.Rollback()
+	dirs, _ := json.Marshal(st.AllowedDirectories)
+	envs, _ := json.Marshal(st.AllowedEnvVars)
 	for k, v := range map[string]string{
-		"allowLocalNetwork": strconv.FormatBool(st.AllowLocalNetwork),
-		"maxResponseMb":     strconv.Itoa(st.MaxResponseMB),
-		"keepExecutions":    strconv.Itoa(st.KeepExecutions),
+		"allowLocalNetwork":  strconv.FormatBool(st.AllowLocalNetwork),
+		"maxResponseMb":      strconv.Itoa(st.MaxResponseMB),
+		"keepExecutions":     strconv.Itoa(st.KeepExecutions),
+		"maxConcurrentRuns":  strconv.Itoa(st.MaxConcurrentRuns),
+		"allowedDirectories": string(dirs),
+		"allowedEnvVars":     string(envs),
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
 			return st, err

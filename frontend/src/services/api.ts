@@ -1,6 +1,8 @@
 // Typed facade over the generated Wails bindings (src/wailsjs is generated — do not edit it).
 import * as Go from '../wailsjs/go/app/App';
 import type {
+  ActivationResult,
+  ActiveRun,
   AppInfo,
   Execution,
   ExportResult,
@@ -9,7 +11,10 @@ import type {
   LogEntry,
   NodeDefinition,
   Project,
+  SaveResult,
   Settings,
+  SettingsResult,
+  TriggerInfo,
   Workflow,
   WorkflowDocument,
   WorkflowMeta,
@@ -32,14 +37,21 @@ export const api = {
   createWorkflow: (projectId: string, name: string) =>
     Go.CreateWorkflow(projectId, name) as unknown as Promise<Workflow>,
   getWorkflow: (id: string) => Go.GetWorkflow(id) as unknown as Promise<Workflow>,
-  saveWorkflow: (id: string, doc: WorkflowDocument) => Go.SaveWorkflow(id, asGo(doc)),
+  saveWorkflow: (id: string, doc: WorkflowDocument) => Go.SaveWorkflow(id, asGo(doc)) as Promise<SaveResult>,
   renameWorkflow: (id: string, name: string, description: string) => Go.RenameWorkflow(id, name, description),
   deleteWorkflow: (id: string) => Go.DeleteWorkflow(id),
   validateWorkflow: (doc: WorkflowDocument) => Go.ValidateWorkflow(asGo(doc)) as Promise<Issue[]>,
 
-  runWorkflow: (workflowId: string, doc: WorkflowDocument) => Go.RunWorkflow(workflowId, asGo(doc)),
-  stopWorkflow: () => Go.StopWorkflow(),
-  activeRun: () => Go.GetActiveRun(),
+  runWorkflow: (workflowId: string, doc: WorkflowDocument, triggerNodeId = '') =>
+    Go.RunWorkflow(workflowId, asGo(doc), triggerNodeId),
+  stopWorkflow: (workflowId: string) => Go.StopWorkflow(workflowId),
+  stopRun: (runId: string) => Go.StopRun(runId),
+  activeRuns: () => Go.GetActiveRuns() as Promise<ActiveRun[]>,
+  setActive: (workflowId: string, active: boolean) =>
+    Go.SetWorkflowActive(workflowId, active) as unknown as Promise<ActivationResult>,
+  triggers: (workflowId: string) => Go.GetTriggers(workflowId) as Promise<TriggerInfo[]>,
+  pickDirectory: (title: string) => Go.PickDirectory(title),
+  startupNotices: () => Go.GetStartupNotices(),
   listExecutions: (workflowId: string) => Go.ListExecutions(workflowId) as Promise<Execution[]>,
   executionLogs: (executionId: string) => Go.GetExecutionLogs(executionId) as Promise<LogEntry[]>,
   clearExecutions: (workflowId: string) => Go.ClearExecutions(workflowId),
@@ -49,7 +61,7 @@ export const api = {
     Go.ImportWorkflow(projectId) as unknown as Promise<ImportResult | null>,
 
   getSettings: () => Go.GetSettings() as Promise<Settings>,
-  saveSettings: (s: Settings) => Go.SaveSettings(asGo(s)) as Promise<Settings>,
+  saveSettings: (s: Settings) => Go.SaveSettings(asGo(s)) as unknown as Promise<SettingsResult>,
 };
 
 /** Extracts a readable message from a rejected Wails call. */

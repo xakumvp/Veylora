@@ -8,6 +8,7 @@ export const statusMeta: Record<NodeStatus, { label: string; color: string; text
   FAILED: { label: 'Failed', color: 'bg-error', text: 'text-error' },
   SKIPPED: { label: 'Skipped', color: 'bg-faint', text: 'text-faint' },
   CANCELLED: { label: 'Cancelled', color: 'bg-warning', text: 'text-warning' },
+  TIMEOUT: { label: 'Timeout', color: 'bg-error', text: 'text-error' },
 };
 
 export const levelMeta: Record<string, string> = {

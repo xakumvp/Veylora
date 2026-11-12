@@ -4,7 +4,8 @@ import { AlertCircle, AlertTriangle, Copy, CopyPlus, Plus, Trash2, Variable, X }
 import { categoryColor, NodeIcon } from '../components/icons';
 import { Button, cx, IconButton, Input, SectionTitle, Select, Textarea, Toggle } from '../components/ui';
 import { canvasBridge } from '../lib/canvasBridge';
-import { ancestors, KEY_PATTERN, keyValues, str, type FlowNode } from '../lib/graph';
+import { ancestors, KEY_PATTERN, keyValues, RESERVED_KEYS, str, type FlowNode } from '../lib/graph';
+import { NodeSettingsForm, SystemVariables, WorkflowAutomation } from './InspectorExtras';
 import { statusMeta } from '../nodes/status';
 import { useEditor } from '../stores/editor';
 import { formatDuration, useRun } from '../stores/run';
@@ -205,13 +206,6 @@ function VariablesHelp({ node }: { node: FlowNode }) {
     return nodes.filter((n) => ids.has(n.id));
   }, [nodes, edges, node.id]);
 
-  if (!upstream.length) {
-    return (
-      <p className="text-xs leading-relaxed text-faint">
-        Подключите этот Node к предыдущим — их результаты станут доступны как переменные.
-      </p>
-    );
-  }
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text).then(
       () => toast('info', 'Скопировано', text),
@@ -220,6 +214,12 @@ function VariablesHelp({ node }: { node: FlowNode }) {
   };
   return (
     <div className="flex flex-col gap-2">
+      <SystemVariables copy={copy} />
+      {!upstream.length && (
+        <p className="text-xs leading-relaxed text-faint">
+          Подключите этот Node к предыдущим — их результаты станут доступны как переменные.
+        </p>
+      )}
       {upstream.map((n) => (
         <div key={n.id}>
           <div className="mb-1 text-[11px] text-muted">{n.data.name}</div>
@@ -298,7 +298,7 @@ function OutputSection({ node }: { node: FlowNode }) {
 function NodeInspector({ node, issues }: { node: FlowNode; issues: Issue[] }) {
   const def = useWorkspace((s) => s.defByType[node.data.nodeType]);
   const { renameNode, setNodeKey, deleteNodes, duplicateNode } = useEditor.getState();
-  const [tab, setTab] = useState<'params' | 'data'>('params');
+  const [tab, setTab] = useState<'params' | 'settings' | 'data'>('params');
   if (!def) return <div className="p-4 text-xs text-error">Неизвестный тип Node: {node.data.nodeType}</div>;
 
   const nodeIssues = issues.filter((i) => i.nodeId === node.id);
@@ -307,7 +307,9 @@ function NodeInspector({ node, issues }: { node: FlowNode; issues: Issue[] }) {
   const general = nodeIssues.filter((i) => !i.field);
   const keyLocalError = !KEY_PATTERN.test(node.data.key)
     ? 'Только латиница, цифры и _, начинается с буквы'
-    : undefined;
+    : RESERVED_KEYS.has(node.data.key)
+      ? 'Это имя зарезервировано (execution, workflow, variables, env)'
+      : undefined;
   const color = categoryColor[def.category] ?? '#94a3b8';
 
   return (
@@ -358,6 +360,7 @@ function NodeInspector({ node, issues }: { node: FlowNode; issues: Issue[] }) {
         {(
           [
             ['params', 'Параметры'],
+            ...(def.trigger ? [] : ([['settings', 'Настройки']] as const)),
             ['data', 'Данные'],
           ] as const
         ).map(([id, label]) => (
@@ -375,7 +378,9 @@ function NodeInspector({ node, issues }: { node: FlowNode; issues: Issue[] }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {tab === 'params' ? (
+        {tab === 'settings' && !def.trigger ? (
+          <NodeSettingsForm node={node} />
+        ) : tab === 'params' ? (
           <div className="flex flex-col gap-4">
             <Field label="Название" required error={fieldError('name')}>
               <Input value={node.data.name} onChange={(e) => renameNode(node.id, e.target.value)} />
@@ -465,6 +470,7 @@ function WorkflowInspector({ issues }: { issues: Issue[] }) {
           rows={3}
         />
       </Field>
+      <WorkflowAutomation />
       <section>
         <SectionTitle>Проверка</SectionTitle>
         {issues.length === 0 ? (

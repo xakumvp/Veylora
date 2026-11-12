@@ -59,6 +59,18 @@ func Summary(issues []Issue) string {
 
 var keyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
+// ReservedKeys are top-level variable names provided by the engine.
+var ReservedKeys = map[string]bool{"execution": true, "workflow": true, "variables": true, "env": true}
+
+// Limits for node and workflow settings.
+const (
+	MaxRetryAttempts  = 10
+	MaxRetryDelayMs   = 10 * 60 * 1000
+	MaxNodeTimeoutSec = 3600
+	MaxRunTimeoutSec  = 24 * 3600
+	MaxVariables      = 100
+)
+
 // Validate runs structural and parameter checks — everything required before a run.
 func Validate(doc workflow.Document, reg *nodes.Registry) []Issue {
 	issues := Structure(doc, reg)
@@ -89,6 +101,7 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 	byID := map[string]workflow.Node{}
 	keys := map[string]string{}
 	triggers := 0
+	manualTriggers := 0
 	for _, n := range doc.Nodes {
 		if strings.TrimSpace(n.ID) == "" {
 			errf("", "", "у Node отсутствует ID")
@@ -99,12 +112,16 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 			continue
 		}
 		byID[n.ID] = n
-		if _, ok := reg.Get(n.Type); !ok {
+		def, ok := reg.Def(n.Type)
+		if !ok {
 			errf(n.ID, "", "неизвестный тип Node %q", n.Type)
 			continue
 		}
-		if n.Type == nodes.TypeManualTrigger {
+		if def.IsTrigger() {
 			triggers++
+		}
+		if n.Type == nodes.TypeManualTrigger {
+			manualTriggers++
 		}
 		label := nodeLabel(n)
 		if strings.TrimSpace(n.Name) == "" {
@@ -113,6 +130,9 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 		if !keyRe.MatchString(n.Key) {
 			issues = append(issues, Issue{Severity: SeverityError, NodeID: n.ID, Field: "key",
 				Message: fmt.Sprintf("«%s»: имя переменной должно начинаться с буквы и содержать только латиницу, цифры и _", label)})
+		} else if ReservedKeys[n.Key] {
+			issues = append(issues, Issue{Severity: SeverityError, NodeID: n.ID, Field: "key",
+				Message: fmt.Sprintf("«%s»: имя %q зарезервировано системой", label, n.Key)})
 		} else if other, dup := keys[n.Key]; dup {
 			issues = append(issues, Issue{Severity: SeverityError, NodeID: n.ID, Field: "key",
 				Message: fmt.Sprintf("«%s»: имя переменной %q уже используется в «%s»", label, n.Key, other)})
@@ -125,9 +145,9 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 	case len(doc.Nodes) == 0:
 		errf("", "", "Workflow пуст — добавьте Manual Trigger")
 	case triggers == 0:
-		errf("", "", "в Workflow нет Manual Trigger — выполнению не с чего начаться")
-	case triggers > 1:
-		errf("", "", "в MVP поддерживается только один Manual Trigger")
+		errf("", "", "в Workflow нет триггера — выполнению не с чего начаться")
+	case manualTriggers > 1:
+		errf("", "", "в Workflow может быть только один Manual Trigger")
 	}
 
 	edgeIDs := map[string]bool{}
@@ -148,17 +168,17 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 			errf(e.Source, e.ID, "Node «%s» не может быть соединён сам с собой", nodeLabel(src))
 			continue
 		}
-		srcExec, ok1 := reg.Get(src.Type)
-		tgtExec, ok2 := reg.Get(tgt.Type)
+		srcDef, ok1 := reg.Def(src.Type)
+		tgtDef, ok2 := reg.Def(tgt.Type)
 		if !ok1 || !ok2 {
 			continue // already reported as unknown type
 		}
-		outPort, ok := findPort(srcExec.Definition().Outputs, e.SourceHandle)
+		outPort, ok := findPort(srcDef.Outputs, e.SourceHandle)
 		if !ok {
 			errf(src.ID, e.ID, "у «%s» нет выхода %q", nodeLabel(src), e.SourceHandle)
 			continue
 		}
-		inPort, ok := findPort(tgtExec.Definition().Inputs, e.TargetHandle)
+		inPort, ok := findPort(tgtDef.Inputs, e.TargetHandle)
 		if !ok {
 			errf(tgt.ID, e.ID, "у «%s» нет входа %q", nodeLabel(tgt), e.TargetHandle)
 			continue
@@ -190,11 +210,11 @@ func Structure(doc workflow.Document, reg *nodes.Registry) []Issue {
 	}
 
 	// Warn about nodes that can never run.
-	reachable := Reachable(doc)
+	reachable := Reachable(doc, reg)
 	for _, n := range doc.Nodes {
 		if !reachable[n.ID] {
 			issues = append(issues, Issue{Severity: SeverityWarning, NodeID: n.ID,
-				Message: fmt.Sprintf("«%s» не подключён к Manual Trigger и будет пропущен", nodeLabel(n))})
+				Message: fmt.Sprintf("«%s» не подключён ни к одному триггеру и будет пропущен", nodeLabel(n))})
 		}
 	}
 	return issues
@@ -208,7 +228,7 @@ func Params(doc workflow.Document, reg *nodes.Registry) []Issue {
 		if !ok {
 			continue
 		}
-		def := exec.Definition()
+		def, _ := reg.Def(n.Type)
 		label := nodeLabel(n)
 		add := func(field, msg string) {
 			issues = append(issues, Issue{Severity: SeverityError, NodeID: n.ID, Field: field,
@@ -265,6 +285,77 @@ func Params(doc workflow.Document, reg *nodes.Registry) []Issue {
 		for _, fe := range exec.Validate(n.Params) {
 			add(fe.Field, fe.Message)
 		}
+		issues = append(issues, nodeSettings(doc, n, def, label)...)
+	}
+	issues = append(issues, workflowSettings(doc)...)
+	return issues
+}
+
+func nodeSettings(doc workflow.Document, n workflow.Node, def nodes.Definition, label string) []Issue {
+	var issues []Issue
+	errf := func(field, format string, args ...any) {
+		issues = append(issues, Issue{Severity: SeverityError, NodeID: n.ID, Field: field,
+			Message: fmt.Sprintf("«%s» → %s", label, fmt.Sprintf(format, args...))})
+	}
+	warn := func(format string, args ...any) {
+		issues = append(issues, Issue{Severity: SeverityWarning, NodeID: n.ID, Message: fmt.Sprintf(format, args...)})
+	}
+	hasErrorEdge := false
+	for _, e := range doc.Edges {
+		if e.Source == n.ID && e.SourceHandle == nodes.ErrorPortID {
+			hasErrorEdge = true
+		}
+	}
+	s := n.EffectiveSettings()
+	if n.Settings != nil {
+		raw := *n.Settings
+		if def.IsTrigger() && (raw.Retry.MaxAttempts > 1 || raw.TimeoutSec > 0 || (raw.OnError != "" && raw.OnError != workflow.OnErrorStop)) {
+			errf("settings", "у триггеров нет настроек повтора и обработки ошибок")
+		}
+		switch raw.OnError {
+		case "", workflow.OnErrorStop, workflow.OnErrorContinue, workflow.OnErrorErrorOutput:
+		default:
+			errf("settings.onError", "неизвестный режим обработки ошибок %q", raw.OnError)
+		}
+		if raw.Retry.MaxAttempts < 0 || raw.Retry.MaxAttempts > MaxRetryAttempts {
+			errf("settings.retry", "количество попыток — от 1 до %d", MaxRetryAttempts)
+		}
+		if raw.Retry.DelayMs < 0 || raw.Retry.DelayMs > MaxRetryDelayMs || raw.Retry.MaxDelayMs < 0 || raw.Retry.MaxDelayMs > MaxRetryDelayMs {
+			errf("settings.retry", "интервал между попытками — от 0 до %d минут", MaxRetryDelayMs/60000)
+		}
+		if raw.TimeoutSec < 0 || raw.TimeoutSec > MaxNodeTimeoutSec {
+			errf("settings.timeout", "таймаут Node — от 0 до %d секунд", MaxNodeTimeoutSec)
+		}
+	}
+	if hasErrorEdge && s.OnError != workflow.OnErrorErrorOutput {
+		warn("«%s»: выход ERROR подключён, но в настройках не выбран режим «Error Output»", label)
+	}
+	if !hasErrorEdge && s.OnError == workflow.OnErrorErrorOutput {
+		warn("«%s»: выбран режим «Error Output», но выход ERROR никуда не подключён", label)
+	}
+	return issues
+}
+
+func workflowSettings(doc workflow.Document) []Issue {
+	var issues []Issue
+	add := func(format string, args ...any) {
+		issues = append(issues, Issue{Severity: SeverityError, Field: "workflow", Message: fmt.Sprintf(format, args...)})
+	}
+	if doc.Settings.TimeoutSec < 0 || doc.Settings.TimeoutSec > MaxRunTimeoutSec {
+		add("таймаут Workflow — от 0 до %d часов", MaxRunTimeoutSec/3600)
+	}
+	if len(doc.Variables) > MaxVariables {
+		add("слишком много переменных Workflow (максимум %d)", MaxVariables)
+	}
+	seen := map[string]bool{}
+	for _, v := range doc.Variables {
+		switch {
+		case !keyRe.MatchString(v.Key):
+			add("переменная %q: имя должно начинаться с буквы и содержать только латиницу, цифры и _", v.Key)
+		case seen[v.Key]:
+			add("переменная %q объявлена дважды", v.Key)
+		}
+		seen[v.Key] = true
 	}
 	return issues
 }
@@ -363,7 +454,7 @@ func findCycle(doc workflow.Document, adj map[string][]string, indeg map[string]
 }
 
 // Reachable returns the set of nodes reachable from any trigger.
-func Reachable(doc workflow.Document) map[string]bool {
+func Reachable(doc workflow.Document, reg *nodes.Registry) map[string]bool {
 	adj := map[string][]string{}
 	for _, e := range doc.Edges {
 		adj[e.Source] = append(adj[e.Source], e.Target)
@@ -371,7 +462,7 @@ func Reachable(doc workflow.Document) map[string]bool {
 	seen := map[string]bool{}
 	var queue []string
 	for _, n := range doc.Nodes {
-		if n.Type == nodes.TypeManualTrigger {
+		if def, ok := reg.Def(n.Type); ok && def.IsTrigger() {
 			queue = append(queue, n.ID)
 			seen[n.ID] = true
 		}

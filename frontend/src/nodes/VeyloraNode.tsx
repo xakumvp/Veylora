@@ -19,6 +19,7 @@ const opLabels: Record<string, string> = {
 };
 
 const unitLabels: Record<string, string> = { ms: 'мс', s: 'с', min: 'мин' };
+const intervalUnits: Record<string, string> = { s: 'сек', min: 'мин', h: 'ч' };
 
 function Summary({ type, params }: { type: string; params: Params }) {
   switch (type) {
@@ -50,6 +51,37 @@ function Summary({ type, params }: { type: string; params: Params }) {
           {str(params, 'duration', '0')} {unitLabels[str(params, 'unit', 's')] ?? ''}
         </span>
       );
+    case 'trigger.cron':
+      return (
+        <span className="truncate">
+          {str(params, 'expression') || '…'} <span className="text-faint">{str(params, 'timezone')}</span>
+        </span>
+      );
+    case 'trigger.interval':
+      return (
+        <span>
+          каждые {str(params, 'every', '?')} {intervalUnits[str(params, 'unit', 'min')] ?? ''}
+        </span>
+      );
+    case 'trigger.schedule':
+      return <span className="truncate">{str(params, 'at').replace('T', ' ') || 'дата не задана'}</span>;
+    case 'trigger.file':
+      return (
+        <span className="truncate">
+          {str(params, 'pattern', '*')} в {str(params, 'directory') || 'каталог не задан'}
+        </span>
+      );
+    case 'trigger.startup':
+      return <span>при запуске Veylora</span>;
+    case 'logic.stop':
+      return (
+        <span className="truncate">
+          <span className={str(params, 'status') === 'failed' ? 'text-error' : 'text-success'}>
+            {str(params, 'status') === 'failed' ? 'ошибка' : 'успех'}
+          </span>{' '}
+          {str(params, 'message')}
+        </span>
+      );
     case 'logging.logger':
       return (
         <span className="truncate">
@@ -74,6 +106,8 @@ function StatusBadge({ status, durationMs }: { status: string; durationMs?: numb
       );
     case 'FAILED':
       return <X size={14} strokeWidth={3} className="text-error" aria-label="Ошибка" />;
+    case 'TIMEOUT':
+      return <X size={14} strokeWidth={3} className="text-error" aria-label="Таймаут" />;
     case 'CANCELLED':
       return <CircleSlash size={13} className="text-warning" aria-label="Отменено" />;
     case 'WAITING':
@@ -91,8 +125,15 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
   const info = showRun ? run : undefined;
   const status = info?.status ?? 'IDLE';
   const color = categoryColor[def?.category ?? ''] ?? '#94a3b8';
-  const outputs = def?.outputs ?? [];
-  const multi = outputs.length > 1;
+  const regular = (def?.outputs ?? []).filter((p) => p.role !== 'error');
+  const errorPort = def?.outputs.find((p) => p.role === 'error');
+  const errorEdge = useEditor((s) => s.edges.some((e) => e.source === id && e.sourceHandle === 'error'));
+  const showErrorPort = !!errorPort && (data.settings?.onError === 'error_output' || errorEdge);
+  const multi = regular.length > 1;
+  const nextRun = useWorkspace((s) =>
+    s.isActive(s.activeWorkflowId) ? s.triggers.find((t) => t.nodeId === id) : undefined,
+  );
+  const retries = (data.settings?.retry?.maxAttempts ?? 1) > 1;
 
   return (
     <div
@@ -101,7 +142,9 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
         selected ? 'border-accent ring-1 ring-accent/40' : 'border-line hover:border-line-strong',
         status === 'RUNNING' && 'animate-pulse-ring border-accent',
         status === 'SUCCESS' && !selected && 'border-success/50',
-        status === 'FAILED' && 'border-error ring-1 ring-error/30',
+        status === 'FAILED' && !info?.handled && 'border-error ring-1 ring-error/30',
+        status === 'FAILED' && info?.handled && 'border-warning/70',
+        status === 'TIMEOUT' && 'border-error',
         status === 'CANCELLED' && !selected && 'border-warning/60',
         status === 'SKIPPED' && 'opacity-45',
       )}
@@ -135,12 +178,34 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
       </div>
 
       {info?.error && status === 'FAILED' && (
-        <div className="mx-3 -mt-1 mb-2.5 line-clamp-2 text-[11px] leading-snug text-error">{info.error}</div>
+        <div
+          className={cx(
+            'mx-3 -mt-1 mb-2.5 line-clamp-2 text-[11px] leading-snug',
+            info.handled ? 'text-warning' : 'text-error',
+          )}
+        >
+          {info.handled ? 'Обработано: ' : ''}
+          {info.error}
+        </div>
+      )}
+
+      {(nextRun || retries || (info?.attempts ?? 0) > 1) && (
+        <div className="mx-3 -mt-1 mb-2.5 flex flex-wrap gap-x-3 text-[10px] text-faint">
+          {nextRun && (
+            <span className="text-success" title={nextRun.detail}>
+              {nextRun.nextRun > 0
+                ? `▶ ${new Date(nextRun.nextRun).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+                : `● ${nextRun.detail}`}
+            </span>
+          )}
+          {retries && <span>повторов: до {data.settings!.retry.maxAttempts}</span>}
+          {(info?.attempts ?? 0) > 1 && <span>попыток: {info!.attempts}</span>}
+        </div>
       )}
 
       {multi ? (
         <div className="flex flex-col gap-1 border-t border-line py-1.5">
-          {outputs.map((p) => {
+          {regular.map((p) => {
             const taken = info?.status === 'SUCCESS' && info.branch === p.id;
             return (
               <div key={p.id} className="relative flex h-5 items-center justify-end pr-3.5">
@@ -158,9 +223,23 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
           })}
         </div>
       ) : (
-        outputs.map((p) => (
+        regular.map((p) => (
           <Handle key={p.id} id={p.id} type="source" position={Position.Right} className="!top-6.5" />
         ))
+      )}
+
+      {showErrorPort && (
+        <div className="relative flex h-6 items-center justify-end border-t border-error/25 pr-3.5">
+          <span
+            className={cx(
+              'text-[10px] font-semibold tracking-wide',
+              info?.branch === 'error' ? 'text-error' : 'text-error/60',
+            )}
+          >
+            ERROR
+          </span>
+          <Handle id="error" type="source" position={Position.Right} className="!top-1/2 !border-error/70" />
+        </div>
       )}
     </div>
   );

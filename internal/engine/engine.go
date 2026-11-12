@@ -40,10 +40,15 @@ func (e *ValidationError) Error() string {
 	return "Workflow содержит ошибки: " + validation.Summary(e.Issues)
 }
 
+// errNodeTimeout marks a node that exceeded its own timeout.
+var errNodeTimeout = errors.New("превышен таймаут Node")
+
 // Engine runs workflows. It is stateless and safe for concurrent use.
 type Engine struct {
 	Registry *nodes.Registry
 	Logger   *slog.Logger
+	// sleep is replaceable in tests.
+	sleep func(ctx context.Context, d time.Duration) error
 }
 
 // New creates an engine.
@@ -51,15 +56,22 @@ func New(reg *nodes.Registry, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Engine{Registry: reg, Logger: logger}
+	return &Engine{Registry: reg, Logger: logger, sleep: sleepCtx}
 }
 
 // Request is a single run.
 type Request struct {
-	RunID      string
-	WorkflowID string
-	Doc        workflow.Document
-	Env        nodes.Env
+	RunID        string
+	WorkflowID   string
+	WorkflowName string
+	Doc          workflow.Document
+	Env          nodes.Env
+	// TriggerNodeID selects the trigger that starts the run; "" picks the Manual
+	// Trigger (or the left-most trigger on the canvas).
+	TriggerNodeID string
+	Event         nodes.TriggerEvent
+	// EnvVars are the environment variables exposed as {{env.NAME}} (allow-listed).
+	EnvVars map[string]string
 }
 
 // Prepare validates the document and returns the execution order.
@@ -75,11 +87,57 @@ func (e *Engine) Prepare(doc workflow.Document) ([]string, error) {
 	return order, nil
 }
 
+// PickTrigger returns the trigger node a run should start from.
+func (e *Engine) PickTrigger(doc workflow.Document, requested string) (workflow.Node, error) {
+	var first, manual *workflow.Node
+	for i := range doc.Nodes {
+		n := &doc.Nodes[i]
+		def, ok := e.Registry.Def(n.Type)
+		if !ok || !def.IsTrigger() {
+			continue
+		}
+		if requested != "" && n.ID == requested {
+			return *n, nil
+		}
+		if first == nil || n.Position.X < first.Position.X || (n.Position.X == first.Position.X && n.Position.Y < first.Position.Y) {
+			first = n
+		}
+		if n.Type == nodes.TypeManualTrigger {
+			manual = n
+		}
+	}
+	if requested != "" {
+		return workflow.Node{}, fmt.Errorf("триггер %q не найден в Workflow", requested)
+	}
+	if manual != nil {
+		return *manual, nil
+	}
+	if first != nil {
+		return *first, nil
+	}
+	return workflow.Node{}, errors.New("в Workflow нет триггера")
+}
+
+type runState struct {
+	req      Request
+	vars     *execution.Context
+	redactor *execution.Redactor
+	sink     Sink
+}
+
+func (r *runState) log(level, nodeID, nodeName, msg string) {
+	r.sink.Log(events.Log{RunID: r.req.RunID, NodeID: nodeID, NodeName: nodeName, Level: level, Message: r.redactor.String(msg), Timestamp: time.Now().UnixMilli()})
+}
+
 // Run executes the workflow synchronously and returns the final run event.
 // Cancel ctx to stop it; the node in progress is marked CANCELLED.
 func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEvent {
 	started := time.Now()
-	run := events.RunEvent{RunID: req.RunID, WorkflowID: req.WorkflowID, Status: events.StatusRunning, StartedAt: started.UnixMilli()}
+	if req.Event.Source == "" {
+		req.Event.Source = nodes.TriggerManual
+	}
+	run := events.RunEvent{RunID: req.RunID, WorkflowID: req.WorkflowID, Status: events.StatusRunning,
+		Trigger: req.Event.Source, StartedAt: started.UnixMilli()}
 
 	finish := func(status, errMsg string) events.RunEvent {
 		end := time.Now()
@@ -94,15 +152,28 @@ func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEven
 	doc := req.Doc
 	doc.Normalize()
 	order, err := e.Prepare(doc)
+	var trigger workflow.Node
+	if err == nil {
+		trigger, err = e.PickTrigger(doc, req.TriggerNodeID)
+	}
+	run.TriggerID = trigger.ID
 	sink.RunStarted(run)
+	st := &runState{req: req, vars: execution.NewContext(), redactor: execution.NewRedactor(), sink: sink}
 	if err != nil {
-		sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelError, Message: err.Error(), Timestamp: time.Now().UnixMilli()})
+		st.log(nodes.LevelError, "", "", err.Error())
 		return finish(events.StatusFailed, err.Error())
 	}
 
-	vars := execution.NewContext()
-	redactor := execution.NewRedactor()
-	collectSecrets(doc, redactor)
+	// Workflow-level timeout.
+	runCtx := ctx
+	if doc.Settings.TimeoutSec > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(doc.Settings.TimeoutSec*float64(time.Second)))
+		defer cancel()
+	}
+
+	e.seedVariables(st, doc, started)
+	collectSecrets(doc, st.redactor)
 
 	byID := map[string]workflow.Node{}
 	outgoing := map[string][]workflow.Edge{}
@@ -116,89 +187,233 @@ func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEven
 	for _, id := range order {
 		sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: id, Status: events.StatusWaiting})
 	}
-	sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelInfo, Message: fmt.Sprintf("Запуск Workflow (%d Nodes)", len(order)), Timestamp: time.Now().UnixMilli()})
+	st.log(nodes.LevelInfo, "", "", fmt.Sprintf("Запуск Workflow (%d Nodes) — триггер «%s», %s", len(order), trigger.Name, sourceLabel(req.Event.Source)))
 
-	active := map[string]bool{}
-	for _, n := range doc.Nodes {
-		if n.Type == nodes.TypeManualTrigger {
-			active[n.ID] = true
+	active := map[string]bool{trigger.ID: true}
+	unhandled := false
+	firstErr := ""
+
+	stopRemaining := func(from int, status string) {
+		for _, rest := range order[from:] {
+			sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: rest, Status: status})
 		}
 	}
+	interrupted := func(from int) (events.RunEvent, bool) {
+		if runCtx.Err() == nil {
+			return events.RunEvent{}, false
+		}
+		stopRemaining(from, events.StatusCancelled)
+		if ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			msg := "превышен таймаут Workflow (" + humanDuration(time.Duration(doc.Settings.TimeoutSec*float64(time.Second))) + ")"
+			st.log(nodes.LevelError, "", "", "Выполнение прервано: "+msg)
+			return finish(events.StatusTimeout, msg), true
+		}
+		st.log(nodes.LevelWarning, "", "", "Выполнение остановлено")
+		return finish(events.StatusCancelled, ""), true
+	}
 
-	failed := false
-	firstErr := ""
 	for i, id := range order {
 		node := byID[id]
-
-		if ctx.Err() != nil {
-			for _, rest := range order[i:] {
-				sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: rest, Status: events.StatusCancelled})
-			}
-			sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelWarning, Message: "Выполнение остановлено пользователем", Timestamp: time.Now().UnixMilli()})
-			return finish(events.StatusCancelled, "")
+		if ev, stop := interrupted(i); stop {
+			return ev
 		}
-
 		if !active[id] {
 			sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: id, Status: events.StatusSkipped})
 			continue
 		}
 
-		res, ev, nodeErr := e.runNode(ctx, req, node, vars, redactor, sink)
-		switch {
-		case nodeErr == nil:
-			vars.Set(node.Key, res.Output)
+		var event *nodes.TriggerEvent
+		if id == trigger.ID {
+			ev := req.Event
+			event = &ev
+		}
+		res, ev, nodeErr := e.runNode(runCtx, st, node, event)
+		if nodeErr != nil && runCtx.Err() != nil {
+			if evRun, stop := interrupted(i + 1); stop {
+				return evRun
+			}
+		}
+
+		activate := func(errorPort bool, branch string) {
 			for _, ed := range outgoing[id] {
-				if res.Branch == "" || ed.SourceHandle == res.Branch {
+				isErr := ed.SourceHandle == nodes.ErrorPortID
+				if errorPort != isErr {
+					continue
+				}
+				if errorPort || branch == "" || ed.SourceHandle == branch {
 					active[ed.Target] = true
 				}
 			}
-		case errors.Is(nodeErr, context.Canceled) || ctx.Err() != nil:
-			for _, rest := range order[i+1:] {
-				sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: rest, Status: events.StatusCancelled})
+		}
+
+		if nodeErr == nil {
+			st.vars.Set(node.Key, res.Output)
+			if res.Stop != nil {
+				stopRemaining(i+1, events.StatusSkipped)
+				msg := "Workflow остановлен узлом «" + node.Name + "»"
+				if res.Stop.Message != "" {
+					msg += ": " + res.Stop.Message
+				}
+				if res.Stop.Status == events.StatusFailed {
+					st.log(nodes.LevelError, node.ID, node.Name, msg)
+					return finish(events.StatusFailed, st.redactor.String(res.Stop.Message))
+				}
+				st.log(nodes.LevelInfo, node.ID, node.Name, msg)
+				return finish(events.StatusSuccess, "")
 			}
-			sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelWarning, Message: "Выполнение остановлено пользователем", Timestamp: time.Now().UnixMilli()})
-			return finish(events.StatusCancelled, "")
+			activate(false, res.Branch)
+			continue
+		}
+
+		errOut := map[string]any{"error": ev.Error, "node": node.Name}
+		switch node.EffectiveSettings().OnError {
+		case workflow.OnErrorContinue:
+			st.vars.Set(node.Key, mergeOutput(res.Output, errOut))
+			// Continue through the main output; nodes with several outputs (Condition) stop here.
+			if def, _ := e.Registry.Def(node.Type); countRegular(def) == 1 {
+				activate(false, "")
+			}
+		case workflow.OnErrorErrorOutput:
+			st.vars.Set(node.Key, mergeOutput(res.Output, errOut))
+			activate(true, "")
 		default:
 			// The current path stops: downstream nodes are not activated and become SKIPPED.
-			failed = true
+			unhandled = true
 			if firstErr == "" {
-				firstErr = fmt.Sprintf("%s: %s", node.Name, ev.Error)
+				firstErr = node.Name + ": " + ev.Error
 			}
 			if res.Output != nil {
-				vars.Set(node.Key, res.Output)
+				st.vars.Set(node.Key, res.Output)
 			}
 		}
 	}
 
-	if failed {
-		sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelError, Message: "Workflow завершён с ошибкой", Timestamp: time.Now().UnixMilli()})
+	if unhandled {
+		st.log(nodes.LevelError, "", "", "Workflow завершён с ошибкой")
 		return finish(events.StatusFailed, firstErr)
 	}
-	sink.Log(events.Log{RunID: req.RunID, Level: nodes.LevelInfo, Message: "Workflow выполнен за " + humanDuration(time.Since(started)), Timestamp: time.Now().UnixMilli()})
+	st.log(nodes.LevelInfo, "", "", "Workflow выполнен за "+humanDuration(time.Since(started)))
 	return finish(events.StatusSuccess, "")
 }
 
-func (e *Engine) runNode(ctx context.Context, req Request, node workflow.Node, vars *execution.Context, red *execution.Redactor, sink Sink) (res nodes.Result, ev events.NodeEvent, err error) {
+// seedVariables publishes the engine-provided variable roots.
+func (e *Engine) seedVariables(st *runState, doc workflow.Document, started time.Time) {
+	st.vars.Set("execution", map[string]any{
+		"id":        st.req.RunID,
+		"startedAt": started.Format(time.RFC3339),
+		"trigger":   st.req.Event.Source,
+	})
+	st.vars.Set("workflow", map[string]any{"id": st.req.WorkflowID, "name": st.req.WorkflowName})
+	vars := map[string]any{}
+	for _, v := range doc.Variables {
+		vars[v.Key] = v.Value
+		if execution.IsSensitiveKey(v.Key) {
+			st.redactor.Add(v.Value)
+		}
+	}
+	st.vars.Set("variables", vars)
+	env := map[string]any{}
+	for k, v := range st.req.EnvVars {
+		env[k] = v
+		if execution.IsSensitiveKey(k) {
+			st.redactor.Add(v)
+		}
+	}
+	st.vars.Set("env", env)
+}
+
+func (e *Engine) runNode(ctx context.Context, st *runState, node workflow.Node, event *nodes.TriggerEvent) (res nodes.Result, ev events.NodeEvent, err error) {
 	start := time.Now()
-	ev = events.NodeEvent{RunID: req.RunID, NodeID: node.ID, Status: events.StatusRunning, StartedAt: start.UnixMilli()}
-	sink.NodeUpdated(ev)
+	ev = events.NodeEvent{RunID: st.req.RunID, NodeID: node.ID, Status: events.StatusRunning, StartedAt: start.UnixMilli()}
+	st.sink.NodeUpdated(ev)
 
 	exec, _ := e.Registry.Get(node.Type)
+	settings := node.EffectiveSettings()
 	in := &nodes.Input{
-		RunID:    req.RunID,
+		RunID:    st.req.RunID,
 		Node:     node,
-		Vars:     vars,
-		Redactor: red,
-		Env:      req.Env,
+		Vars:     st.vars,
+		Redactor: st.redactor,
+		Env:      st.req.Env,
+		Event:    event,
 		Log: func(level, msg string, data map[string]any) {
 			var d any
 			if data != nil {
-				d = red.Value(data)
+				d = st.redactor.Value(data)
 			}
-			sink.Log(events.Log{RunID: req.RunID, NodeID: node.ID, NodeName: node.Name, Level: level, Message: red.String(msg), Data: d, Timestamp: time.Now().UnixMilli()})
+			st.sink.Log(events.Log{RunID: st.req.RunID, NodeID: node.ID, NodeName: node.Name, Level: level, Message: st.redactor.String(msg), Data: d, Timestamp: time.Now().UnixMilli()})
 		},
 	}
 
+	attempts := 0
+	for {
+		attempts++
+		res, err = e.attempt(ctx, exec, in, node, settings.TimeoutSec)
+		if err == nil || ctx.Err() != nil || attempts >= settings.Retry.MaxAttempts {
+			break
+		}
+		delay := retryDelay(settings.Retry, attempts)
+		in.Log(nodes.LevelWarning, fmt.Sprintf("Попытка %d из %d не удалась: %s. Повтор через %s",
+			attempts, settings.Retry.MaxAttempts, err.Error(), humanDuration(delay)), nil)
+		if sleepErr := e.sleep(ctx, delay); sleepErr != nil {
+			err = sleepErr
+			break
+		}
+	}
+
+	end := time.Now()
+	ev.FinishedAt = end.UnixMilli()
+	ev.DurationMs = end.Sub(start).Milliseconds()
+	ev.Attempts = attempts
+	if res.Output != nil {
+		ev.Output = previewOutput(st.redactor.Value(res.Output))
+	}
+
+	switch {
+	case err == nil:
+		ev.Status = events.StatusSuccess
+		ev.Branch = res.Branch
+		msg := "Выполнен за " + humanDuration(end.Sub(start))
+		if attempts > 1 {
+			msg += fmt.Sprintf(" (с попытки %d)", attempts)
+		}
+		if res.Branch != "" {
+			msg += " → ветка " + strings.ToUpper(res.Branch)
+		}
+		in.Log(nodes.LevelInfo, msg, nil)
+	case ctx.Err() != nil:
+		ev.Status = events.StatusCancelled
+		ev.Error = "отменено"
+		err = context.Canceled
+	default:
+		ev.Status = events.StatusFailed
+		ev.Error = st.redactor.String(err.Error())
+		e.Logger.Warn("node failed", "run", st.req.RunID, "node", node.ID, "type", node.Type, "attempts", attempts,
+			"error", st.redactor.String(fmt.Sprintf("%+v", err)))
+		switch settings.OnError {
+		case workflow.OnErrorContinue:
+			ev.Handled = true
+			in.Log(nodes.LevelWarning, ev.Error+" — ошибка пропущена (Continue On Error)", nil)
+		case workflow.OnErrorErrorOutput:
+			ev.Handled = true
+			ev.Branch = nodes.ErrorPortID
+			in.Log(nodes.LevelWarning, ev.Error+" — передано на выход ERROR", nil)
+		default:
+			in.Log(nodes.LevelError, ev.Error, nil)
+		}
+	}
+	st.sink.NodeUpdated(ev)
+	return res, ev, err
+}
+
+// attempt runs the executor once with an optional node timeout and panic protection.
+func (e *Engine) attempt(ctx context.Context, exec nodes.Executor, in *nodes.Input, node workflow.Node, timeoutSec float64) (res nodes.Result, err error) {
+	nctx := ctx
+	if timeoutSec > 0 {
+		var cancel context.CancelFunc
+		nctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec*float64(time.Second)))
+		defer cancel()
+	}
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -206,38 +421,74 @@ func (e *Engine) runNode(ctx context.Context, req Request, node workflow.Node, v
 				err = fmt.Errorf("внутренняя ошибка Node: %v", r)
 			}
 		}()
-		res, err = exec.Execute(ctx, in)
+		res, err = exec.Execute(nctx, in)
 	}()
-
-	end := time.Now()
-	ev.FinishedAt = end.UnixMilli()
-	ev.DurationMs = end.Sub(start).Milliseconds()
-	if res.Output != nil {
-		ev.Output = previewOutput(red.Value(res.Output))
+	if err != nil && ctx.Err() == nil && nctx.Err() != nil {
+		err = fmt.Errorf("%w (%s)", errNodeTimeout, humanDuration(time.Duration(timeoutSec*float64(time.Second))))
 	}
+	return res, err
+}
 
-	switch {
-	case err == nil:
-		ev.Status = events.StatusSuccess
-		ev.Branch = res.Branch
-		msg := fmt.Sprintf("Выполнен за %d мс", ev.DurationMs)
-		if res.Branch != "" {
-			msg += fmt.Sprintf(" → ветка %s", stringsUpper(res.Branch))
+func retryDelay(r workflow.Retry, attempt int) time.Duration {
+	d := time.Duration(r.DelayMs) * time.Millisecond
+	if r.Backoff {
+		for i := 1; i < attempt && d < time.Hour; i++ {
+			d *= 2
 		}
-		in.Log(nodes.LevelInfo, msg, nil)
-	case errors.Is(err, context.Canceled) || ctx.Err() != nil:
-		ev.Status = events.StatusCancelled
-		ev.Error = "отменено"
-		err = context.Canceled
-	default:
-		ev.Status = events.StatusFailed
-		ev.Error = red.String(err.Error())
-		// Full (redacted) chain goes to the diagnostic log file.
-		e.Logger.Warn("node failed", "run", req.RunID, "node", node.ID, "type", node.Type, "error", red.String(fmt.Sprintf("%+v", err)))
-		in.Log(nodes.LevelError, ev.Error, nil)
 	}
-	sink.NodeUpdated(ev)
-	return res, ev, err
+	if r.MaxDelayMs > 0 && d > time.Duration(r.MaxDelayMs)*time.Millisecond {
+		d = time.Duration(r.MaxDelayMs) * time.Millisecond
+	}
+	return d
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func countRegular(def nodes.Definition) int {
+	n := 0
+	for _, p := range def.Outputs {
+		if p.Role != "error" {
+			n++
+		}
+	}
+	return n
+}
+
+func mergeOutput(out map[string]any, extra map[string]any) map[string]any {
+	m := map[string]any{}
+	for k, v := range out {
+		m[k] = v
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
+func sourceLabel(s string) string {
+	switch s {
+	case nodes.TriggerManual:
+		return "запуск вручную"
+	case "schedule":
+		return "запуск по расписанию"
+	case nodes.TriggerFile:
+		return "событие файловой системы"
+	case nodes.TriggerStartup:
+		return "запуск приложения"
+	}
+	return s
 }
 
 // collectSecrets registers literal secret values from key/value params (e.g. Authorization headers).
@@ -285,16 +536,6 @@ func truncateUTF8(s string, n int) string {
 		n--
 	}
 	return s[:n]
-}
-
-func stringsUpper(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if c >= 'a' && c <= 'z' {
-			b[i] = c - 32
-		}
-	}
-	return string(b)
 }
 
 // humanDuration formats a duration for the Execution Panel: "480 мс", "1,48 с", "2 мин 5 с".

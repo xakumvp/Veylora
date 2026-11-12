@@ -62,6 +62,13 @@ func StripSecrets(doc Document) (Document, []string, error) {
 	cp.Normalize()
 
 	var removed []string
+	for i := range cp.Variables {
+		v := &cp.Variables[i]
+		if execution.IsSensitiveKey(v.Key) && v.Value != "" && !isPureTemplate(v.Value) {
+			v.Value = ""
+			removed = append(removed, "Переменные Workflow → "+v.Key)
+		}
+	}
 	for i := range cp.Nodes {
 		n := &cp.Nodes[i]
 		for key, val := range n.Params {

@@ -1,13 +1,15 @@
 // Plain TypeScript mirrors of the Go structures exchanged over Wails bindings.
 // Keep in sync with internal/{nodes,workflow,storage,events,validation}.
 
-export type NodeStatus = 'IDLE' | 'WAITING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
+export type NodeStatus =
+  'IDLE' | 'WAITING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'CANCELLED' | 'TIMEOUT';
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
 export interface Port {
   id: string;
   label: string;
   kind: string;
+  role?: 'error';
 }
 
 export interface ParamOption {
@@ -43,6 +45,24 @@ export interface NodeDefinition {
   outputs: Port[];
   params: ParamSpec[];
   outputDoc: { name: string; description: string }[];
+  trigger?: 'manual' | 'cron' | 'interval' | 'schedule' | 'file' | 'startup';
+}
+
+export type OnError = 'stop' | 'continue' | 'error_output';
+
+export interface NodeSettings {
+  retry: { maxAttempts: number; delayMs: number; backoff: boolean; maxDelayMs: number };
+  timeoutSec: number;
+  onError: OnError;
+}
+
+export interface WorkflowVariable {
+  key: string;
+  value: string;
+}
+
+export interface WorkflowSettings {
+  timeoutSec: number;
 }
 
 export interface KeyValueRow {
@@ -59,6 +79,7 @@ export interface WorkflowNode {
   name: string;
   key: string;
   params: Params;
+  settings?: NodeSettings;
   position: { x: number; y: number };
 }
 
@@ -80,6 +101,8 @@ export interface WorkflowDocument {
   schemaVersion: number;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
+  variables: WorkflowVariable[];
+  settings: WorkflowSettings;
   viewport?: Viewport;
 }
 
@@ -96,6 +119,7 @@ export interface WorkflowMeta {
   projectId: string;
   name: string;
   description: string;
+  active: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -109,6 +133,8 @@ export interface Execution {
   workflowId: string;
   status: NodeStatus;
   error: string;
+  trigger: string;
+  triggerNodeId: string;
   startedAt: number;
   finishedAt: number;
   durationMs: number;
@@ -129,6 +155,8 @@ export interface RunEvent {
   runId: string;
   workflowId: string;
   status: NodeStatus;
+  trigger: string;
+  triggerNodeId?: string;
   startedAt: number;
   finishedAt?: number;
   durationMs: number;
@@ -141,6 +169,8 @@ export interface NodeEvent {
   status: NodeStatus;
   branch?: string;
   error?: string;
+  attempts?: number;
+  handled?: boolean;
   output?: unknown;
   startedAt?: number;
   finishedAt?: number;
@@ -159,6 +189,39 @@ export interface Settings {
   allowLocalNetwork: boolean;
   maxResponseMb: number;
   keepExecutions: number;
+  maxConcurrentRuns: number;
+  allowedDirectories: string[];
+  allowedEnvVars: string[];
+}
+
+export interface TriggerInfo {
+  workflowId: string;
+  nodeId: string;
+  nodeName: string;
+  kind: string;
+  nextRun: number;
+  detail: string;
+}
+
+export interface ActiveRun {
+  runId: string;
+  workflowId: string;
+  startedAt: number;
+}
+
+export interface SaveResult {
+  updatedAt: number;
+  warning?: string;
+}
+
+export interface SettingsResult {
+  settings: Settings;
+  warnings: string[];
+}
+
+export interface ActivationResult {
+  active: boolean;
+  triggers: TriggerInfo[];
 }
 
 export interface AppInfo {
@@ -184,4 +247,5 @@ export interface VNodeData extends Record<string, unknown> {
   name: string;
   key: string;
   params: Params;
+  settings?: NodeSettings;
 }

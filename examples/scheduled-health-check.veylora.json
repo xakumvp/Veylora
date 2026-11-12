@@ -1,0 +1,82 @@
+{
+  "format": "veylora.workflow",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-12T00:00:00Z",
+  "app": "Veylora 0.2.0",
+  "name": "Пример: проверка сайта по расписанию",
+  "description": "Каждые 15 минут проверяет доступность сайта с повторами; при ошибке пишет WARNING через выход ERROR. Включите «Авто», чтобы запустить расписание.",
+  "workflow": {
+    "schemaVersion": 1,
+    "variables": [{ "key": "site", "value": "https://example.com" }],
+    "settings": { "timeoutSec": 120 },
+    "nodes": [
+      {
+        "id": "manual",
+        "type": "trigger.manual",
+        "name": "Проверить сейчас",
+        "key": "trigger",
+        "params": { "runName": "Ручная проверка" },
+        "position": { "x": 40, "y": 80 }
+      },
+      {
+        "id": "cron",
+        "type": "trigger.cron",
+        "name": "Каждые 15 минут",
+        "key": "cron",
+        "params": { "expression": "*/15 * * * *", "timezone": "" },
+        "position": { "x": 40, "y": 260 }
+      },
+      {
+        "id": "check",
+        "type": "http.request",
+        "name": "Запрос к сайту",
+        "key": "http",
+        "params": {
+          "method": "GET",
+          "url": "{{variables.site}}",
+          "query": [],
+          "headers": [],
+          "body": "",
+          "timeout": 20,
+          "failOnError": true
+        },
+        "settings": {
+          "retry": { "maxAttempts": 3, "delayMs": 2000, "backoff": true, "maxDelayMs": 10000 },
+          "timeoutSec": 0,
+          "onError": "error_output"
+        },
+        "position": { "x": 340, "y": 160 }
+      },
+      {
+        "id": "ok",
+        "type": "logging.logger",
+        "name": "Сайт доступен",
+        "key": "log_ok",
+        "params": {
+          "message": "{{variables.site}} ответил {{http.status}} за {{http.timeMs}} мс ({{execution.trigger}})",
+          "level": "INFO",
+          "variables": []
+        },
+        "position": { "x": 660, "y": 80 }
+      },
+      {
+        "id": "down",
+        "type": "logging.logger",
+        "name": "Сайт недоступен",
+        "key": "log_down",
+        "params": {
+          "message": "{{variables.site}} недоступен: {{http.error}}",
+          "level": "WARNING",
+          "variables": []
+        },
+        "position": { "x": 660, "y": 280 }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "manual", "sourceHandle": "out", "target": "check", "targetHandle": "in" },
+      { "id": "e2", "source": "cron", "sourceHandle": "out", "target": "check", "targetHandle": "in" },
+      { "id": "e3", "source": "check", "sourceHandle": "out", "target": "ok", "targetHandle": "in" },
+      { "id": "e4", "source": "check", "sourceHandle": "error", "target": "down", "targetHandle": "in" }
+    ]
+  }
+}

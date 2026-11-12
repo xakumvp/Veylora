@@ -1,4 +1,5 @@
 import {
+  Zap,
   ChevronRight,
   FilePlus2,
   FolderPlus,
@@ -18,7 +19,8 @@ import type { Project, WorkflowMeta } from '../types';
 
 function WorkflowRow({ w }: { w: WorkflowMeta }) {
   const active = useWorkspace((s) => s.activeWorkflowId === w.id);
-  const running = useRun((s) => !!s.activeRunId && s.runWorkflowId === w.id);
+  const running = useRun((s) => !!s.activeRuns[w.id]);
+  const automated = w.active;
   const { openWorkflow, renameWorkflow, deleteWorkflow } = useWorkspace.getState();
   const { askText, askConfirm } = useUI.getState();
 
@@ -37,6 +39,9 @@ function WorkflowRow({ w }: { w: WorkflowMeta }) {
       <span className="min-w-0 flex-1 truncate">{w.name}</span>
       {running && (
         <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" title="Выполняется" />
+      )}
+      {automated && !running && (
+        <Zap size={11} className="shrink-0 fill-current text-success" aria-label="Автоматизация включена" />
       )}
       <div className="hidden items-center group-hover:flex">
         <IconButton
@@ -178,6 +183,7 @@ function ProjectGroup({ p }: { p: Project }) {
 export function Sidebar() {
   const projects = useWorkspace((s) => s.projects);
   const activeProjectId = useWorkspace((s) => s.activeProjectId);
+  const version = useWorkspace((s) => s.info?.version?.replace(/-dev$/, '') ?? '');
   const { createProject, createWorkflow } = useWorkspace.getState();
   const { askText, setSettingsOpen, setAboutOpen } = useUI.getState();
 
@@ -208,7 +214,7 @@ export function Sidebar() {
         <Logo size={22} />
         <span className="text-[15px] font-semibold tracking-tight">Veylora</span>
         <span className="ml-auto rounded bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-faint">
-          MVP
+          v{version}
         </span>
       </div>
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"veylora/internal/engine"
+	"veylora/internal/events"
 	"veylora/internal/storage"
 	"veylora/internal/validation"
 	"veylora/internal/workflow"
@@ -28,6 +29,9 @@ func testApp(t *testing.T) *App {
 	}
 	t.Cleanup(func() { s.Close() })
 	a.store = s
+	a.emit = events.NopEmitter{}
+	a.initScheduler()
+	t.Cleanup(a.sched.Stop)
 	return a
 }
 
@@ -135,5 +139,52 @@ func TestExampleFilesImport(t *testing.T) {
 				t.Errorf("%s: %s", filepath.Base(f), i.Message)
 			}
 		}
+	}
+}
+
+func TestActivationLifecycle(t *testing.T) {
+	a := testApp(t)
+	p, _ := a.CreateProject("Auto")
+	w, _ := a.CreateWorkflow(p.ID, "Cron")
+	if _, err := a.SetWorkflowActive(w.ID, true); err == nil {
+		t.Fatal("manual-only workflow must not activate")
+	}
+
+	doc := starterDocument()
+	doc.Nodes = append(doc.Nodes, workflow.Node{ID: "cron", Type: "trigger.cron", Name: "Каждый день", Key: "cron",
+		Params: map[string]any{"expression": "@daily"}, Position: workflow.Position{X: 80, Y: 400}})
+	if _, err := a.SaveWorkflow(w.ID, doc); err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.SetWorkflowActive(w.ID, true)
+	if err != nil || !res.Active || len(res.Triggers) != 1 {
+		t.Fatalf("activate: %+v %v", res, err)
+	}
+	got, _ := a.GetWorkflow(w.ID)
+	if !got.Active {
+		t.Fatal("active flag not persisted")
+	}
+
+	// Breaking the cron expression in a save switches automation off with a warning.
+	doc.Nodes[1].Params["expression"] = "bad"
+	sr, err := a.SaveWorkflow(w.ID, doc)
+	if err != nil || sr.Warning == "" {
+		t.Fatalf("expected warning, got %+v %v", sr, err)
+	}
+	got, _ = a.GetWorkflow(w.ID)
+	if got.Active || a.sched.IsActive(w.ID) {
+		t.Fatal("broken workflow must be deactivated")
+	}
+
+	// Restart: active workflows are re-armed from the database.
+	doc.Nodes[1].Params["expression"] = "@hourly"
+	_, _ = a.SaveWorkflow(w.ID, doc)
+	if _, err := a.SetWorkflowActive(w.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	a.sched.Stop()
+	a.initScheduler()
+	if problems := a.restoreSchedules(context.Background()); len(problems) != 0 || !a.sched.IsActive(w.ID) {
+		t.Fatalf("restore failed: %v", problems)
 	}
 }

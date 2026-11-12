@@ -12,15 +12,18 @@ export interface NodeRunInfo {
   output?: unknown;
   branch?: string;
   durationMs?: number;
+  attempts?: number;
+  handled?: boolean;
 }
 
 interface RunState {
-  /** Run currently executing (only one at a time). */
-  activeRunId: string | null;
+  /** Runs in progress: workflowId → runId (several workflows may run at once). */
+  activeRuns: Record<string, string>;
   /** Run whose logs/statuses are displayed (live or from history). */
   shownRunId: string | null;
   runWorkflowId: string | null;
   status: NodeStatus;
+  trigger?: string;
   startedAt?: number;
   durationMs?: number;
   error?: string;
@@ -30,7 +33,7 @@ interface RunState {
   issues: Issue[];
   starting: boolean;
 
-  start: () => Promise<void>;
+  start: (triggerNodeId?: string) => Promise<void>;
   stop: () => Promise<void>;
   onRunStarted: (ev: RunEvent) => void;
   onRunFinished: (ev: RunEvent) => void;
@@ -44,8 +47,21 @@ interface RunState {
   syncActive: () => Promise<void>;
 }
 
+const currentWorkflow = () => useEditor.getState().workflowId;
+
+/** Trigger node selected on the canvas, if any — Run starts from it. */
+function selectedTrigger(isTrigger: (type: string) => boolean): string {
+  const sel = useEditor.getState().nodes.filter((n) => n.selected);
+  return sel.length === 1 && isTrigger(sel[0].data.nodeType) ? sel[0].id : '';
+}
+
+let triggerCheck: (type: string) => boolean = () => false;
+export const setTriggerCheck = (fn: (type: string) => boolean) => {
+  triggerCheck = fn;
+};
+
 export const useRun = create<RunState>((set, get) => ({
-  activeRunId: null,
+  activeRuns: {},
   shownRunId: null,
   runWorkflowId: null,
   status: 'IDLE',
@@ -55,46 +71,51 @@ export const useRun = create<RunState>((set, get) => ({
   issues: [],
   starting: false,
 
-  start: async () => {
+  start: async (triggerNodeId) => {
     const editor = useEditor.getState();
-    if (!editor.workflowId || get().activeRunId || get().starting) return;
     const workflowId = editor.workflowId;
+    if (!workflowId || get().activeRuns[workflowId] || get().starting) return;
     set({ starting: true });
     try {
       void editor.save();
-      const doc = editor.document();
-      const runId = await api.runWorkflow(workflowId, doc);
-      // run:started usually arrives first; make sure the state is consistent either way.
-      if (get().activeRunId !== runId) {
-        set({ activeRunId: runId, shownRunId: runId, runWorkflowId: workflowId, status: 'RUNNING' });
+      const runId = await api.runWorkflow(
+        workflowId,
+        editor.document(),
+        triggerNodeId ?? selectedTrigger(triggerCheck),
+      );
+      if (!get().activeRuns[workflowId]) {
+        set((s) => ({
+          activeRuns: { ...s.activeRuns, [workflowId]: runId },
+          shownRunId: runId,
+          runWorkflowId: workflowId,
+          status: 'RUNNING',
+        }));
       }
     } catch (err) {
-      const msg = errorMessage(err);
-      toast('error', 'Workflow не запущен', msg);
+      toast('error', 'Workflow не запущен', errorMessage(err));
     } finally {
       set({ starting: false });
     }
   },
 
   stop: async () => {
+    const workflowId = currentWorkflow();
+    if (!workflowId) return;
     try {
-      await api.stopWorkflow();
+      await api.stopWorkflow(workflowId);
     } catch (err) {
       toast('error', 'Не удалось остановить', errorMessage(err));
     }
   },
 
   onRunStarted: (ev) => {
-    const current = useEditor.getState().workflowId;
-    if (ev.workflowId !== current) {
-      set({ activeRunId: ev.runId });
-      return;
-    }
+    set((s) => ({ activeRuns: { ...s.activeRuns, [ev.workflowId]: ev.runId } }));
+    if (ev.workflowId !== currentWorkflow()) return;
     set({
-      activeRunId: ev.runId,
       shownRunId: ev.runId,
       runWorkflowId: ev.workflowId,
       status: 'RUNNING',
+      trigger: ev.trigger,
       startedAt: ev.startedAt,
       durationMs: undefined,
       error: undefined,
@@ -104,13 +125,25 @@ export const useRun = create<RunState>((set, get) => ({
   },
 
   onRunFinished: (ev) => {
-    set({ activeRunId: null });
+    set((s) => {
+      const activeRuns = { ...s.activeRuns };
+      if (activeRuns[ev.workflowId] === ev.runId) delete activeRuns[ev.workflowId];
+      return { activeRuns };
+    });
+    if (ev.trigger && ev.trigger !== 'manual') {
+      // Automatic run: next fire times changed.
+      window.dispatchEvent(new CustomEvent('veylora:automation-changed', { detail: ev.workflowId }));
+    }
+    if (ev.workflowId !== currentWorkflow()) return;
+    void get().loadHistory(ev.workflowId);
     if (ev.runId !== get().shownRunId) return;
     set({ status: ev.status, durationMs: ev.durationMs, error: ev.error });
-    if (ev.status === 'SUCCESS') toast('success', 'Workflow выполнен', `за ${formatDuration(ev.durationMs)}`);
+    const auto = ev.trigger && ev.trigger !== 'manual';
+    if (ev.status === 'SUCCESS' && !auto)
+      toast('success', 'Workflow выполнен', `за ${formatDuration(ev.durationMs)}`);
     else if (ev.status === 'FAILED') toast('error', 'Workflow завершён с ошибкой', ev.error);
-    else if (ev.status === 'CANCELLED') toast('warning', 'Выполнение остановлено');
-    if (ev.workflowId) void get().loadHistory(ev.workflowId);
+    else if (ev.status === 'TIMEOUT') toast('error', 'Превышен таймаут Workflow', ev.error);
+    else if (ev.status === 'CANCELLED' && !auto) toast('warning', 'Выполнение остановлено');
   },
 
   onNodeStatus: (ev) => {
@@ -124,6 +157,8 @@ export const useRun = create<RunState>((set, get) => ({
           output: ev.output ?? s.nodes[ev.nodeId]?.output,
           branch: ev.branch,
           durationMs: ev.durationMs,
+          attempts: ev.attempts,
+          handled: ev.handled,
         },
       },
     }));
@@ -137,13 +172,12 @@ export const useRun = create<RunState>((set, get) => ({
   },
 
   resetForWorkflow: (workflowId) => {
-    const s = get();
-    const live = s.activeRunId && s.runWorkflowId === workflowId;
-    if (live) return;
+    const live = get().activeRuns[workflowId];
     set({
-      shownRunId: null,
+      shownRunId: live ?? null,
       runWorkflowId: workflowId,
-      status: 'IDLE',
+      status: live ? 'RUNNING' : 'IDLE',
+      trigger: undefined,
       nodes: {},
       logs: [],
       error: undefined,
@@ -156,14 +190,14 @@ export const useRun = create<RunState>((set, get) => ({
   loadHistory: async (workflowId) => {
     try {
       const executions = await api.listExecutions(workflowId);
-      if (useEditor.getState().workflowId === workflowId) set({ executions });
+      if (currentWorkflow() === workflowId) set({ executions });
     } catch (err) {
       toast('error', 'История не загружена', errorMessage(err));
     }
   },
 
   showExecution: async (ex) => {
-    if (get().activeRunId === ex.id) {
+    if (get().activeRuns[ex.workflowId] === ex.id) {
       set({ shownRunId: ex.id });
       return;
     }
@@ -172,6 +206,7 @@ export const useRun = create<RunState>((set, get) => ({
       set({
         shownRunId: ex.id,
         status: ex.status,
+        trigger: ex.trigger,
         startedAt: ex.startedAt,
         durationMs: ex.durationMs,
         error: ex.error,
@@ -184,9 +219,9 @@ export const useRun = create<RunState>((set, get) => ({
   },
 
   clearHistory: async () => {
-    const workflowId = useEditor.getState().workflowId;
+    const workflowId = currentWorkflow();
     if (!workflowId) return;
-    if (get().activeRunId) {
+    if (get().activeRuns[workflowId]) {
       toast('warning', 'Дождитесь окончания выполнения');
       return;
     }
@@ -210,8 +245,8 @@ export const useRun = create<RunState>((set, get) => ({
 
   syncActive: async () => {
     try {
-      const id = await api.activeRun();
-      set({ activeRunId: id || null });
+      const runs = await api.activeRuns();
+      set({ activeRuns: Object.fromEntries((runs ?? []).map((r) => [r.workflowId, r.runId])) });
     } catch {
       /* backend not ready */
     }
@@ -226,3 +261,10 @@ export function formatDuration(ms?: number): string {
   const s = Math.round((ms % 60_000) / 1000);
   return `${m} мин ${s} с`;
 }
+
+export const triggerLabels: Record<string, string> = {
+  manual: 'вручную',
+  schedule: 'расписание',
+  file: 'файл',
+  startup: 'старт',
+};

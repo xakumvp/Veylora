@@ -174,10 +174,11 @@ func TestStopCancelsDelay(t *testing.T) {
 
 	m := NewManager(New(nodes.NewRegistry(), nil))
 	sink := newSink()
-	if _, err := m.Start(Request{Doc: doc}, sink); err != nil {
+	runID, err := m.Start(Request{WorkflowID: "wf", Doc: doc}, sink)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Start(Request{Doc: doc}, newSink()); !errors.Is(err, ErrAlreadyRunning) {
+	if _, err := m.Start(Request{WorkflowID: "wf", Doc: doc}, newSink()); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("second start must be refused, got %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -185,7 +186,7 @@ func TestStopCancelsDelay(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	start := time.Now()
-	if !m.Stop() {
+	if !m.Stop(runID) {
 		t.Fatal("Stop reported nothing running")
 	}
 	if !m.Wait(2 * time.Second) {
@@ -197,7 +198,7 @@ func TestStopCancelsDelay(t *testing.T) {
 	if sink.final.Status != events.StatusCancelled || sink.last("wait") != "CANCELLED" || sink.last("log") != "CANCELLED" {
 		t.Fatalf("final=%s wait=%s log=%s", sink.final.Status, sink.last("wait"), sink.last("log"))
 	}
-	if m.ActiveRunID() != "" {
+	if len(m.Active()) != 0 {
 		t.Fatal("manager still reports an active run")
 	}
 }

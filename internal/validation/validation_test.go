@@ -52,7 +52,7 @@ func TestInvalidWorkflows(t *testing.T) {
 		mutate func(*workflow.Document)
 		want   string
 	}{
-		"no trigger":   {func(d *workflow.Document) { d.Nodes = d.Nodes[1:]; d.Edges = nil }, "нет Manual Trigger"},
+		"no trigger":   {func(d *workflow.Document) { d.Nodes = d.Nodes[1:]; d.Edges = nil }, "нет триггера"},
 		"unknown type": {func(d *workflow.Document) { d.Nodes[2].Type = "os.exec" }, "неизвестный тип"},
 		"missing node": {func(d *workflow.Document) { d.Edges = append(d.Edges, edge("e9", "t", "out", "ghost")) }, "несуществующий Node"},
 		"bad handle":   {func(d *workflow.Document) { d.Edges[1].SourceHandle = "maybe" }, "нет выхода"},

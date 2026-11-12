@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"veylora/internal/engine"
+	"veylora/internal/events"
 	"veylora/internal/nodes"
+	"veylora/internal/scheduler"
 	"veylora/internal/storage"
 	"veylora/internal/validation"
 	"veylora/internal/workflow"
@@ -39,6 +41,23 @@ type App struct {
 	reg     *nodes.Registry
 	engine  *engine.Engine
 	runs    *engine.Manager
+	sched   *scheduler.Scheduler
+	// emit overrides the Wails emitter (tests).
+	emit events.Emitter
+	// notices are shown to the user once the GUI is ready (e.g. schedules that failed to restore).
+	notices []string
+}
+
+// SaveResult is returned after saving a workflow.
+type SaveResult struct {
+	UpdatedAt int64  `json:"updatedAt"`
+	Warning   string `json:"warning,omitempty"`
+}
+
+// SettingsResult is returned after saving settings.
+type SettingsResult struct {
+	Settings storage.Settings `json:"settings"`
+	Warnings []string         `json:"warnings"`
 }
 
 // New creates the application. Nothing touches disk until startup.
@@ -73,10 +92,36 @@ func (a *App) startup(ctx context.Context) {
 	if err := a.seed(ctx); err != nil {
 		a.logger.Warn("seed example project", "error", err)
 	}
+	if st, err := store.GetSettings(ctx); err == nil {
+		a.runs.SetMaxConcurrent(st.MaxConcurrentRuns)
+	}
+	a.initScheduler()
+	a.notices = append(a.notices, a.restoreSchedules(ctx)...)
+	a.sched.FireStartup()
 	a.logger.Info("startup", "version", a.version, "dataDir", dir)
 }
 
+func (a *App) initScheduler() {
+	a.sched = scheduler.New(a.reg, a.fireTrigger, func(wf, node string) int64 {
+		at, _ := a.store.TriggerLastFired(context.Background(), wf, node)
+		return at
+	}, a.logger)
+}
+
+// GetStartupNotices returns (once) messages produced while the app was starting.
+func (a *App) GetStartupNotices() []string {
+	n := a.notices
+	a.notices = nil
+	if n == nil {
+		n = []string{}
+	}
+	return n
+}
+
 func (a *App) shutdown(_ context.Context) {
+	if a.sched != nil {
+		a.sched.Stop()
+	}
 	if a.runs != nil {
 		a.runs.Shutdown(5 * time.Second)
 	}
@@ -121,7 +166,7 @@ func (a *App) userError(op string, err error) error {
 		return errors.New("запись не найдена — возможно, она была удалена")
 	}
 	var ve *engine.ValidationError
-	if errors.As(err, &ve) || errors.Is(err, engine.ErrAlreadyRunning) {
+	if errors.As(err, &ve) || errors.Is(err, engine.ErrAlreadyRunning) || errors.Is(err, engine.ErrTooManyRuns) {
 		return err
 	}
 	a.logger.Error(op, "error", err)
@@ -177,8 +222,17 @@ func (a *App) DeleteProject(id string) error {
 	if err != nil {
 		return err
 	}
-	if a.runs.ActiveRunID() != "" {
-		return errors.New("сначала остановите выполняющийся Workflow")
+	wfs, err := s.ListWorkflows(a.ctx, id)
+	if err != nil {
+		return a.userError("удаление проекта", err)
+	}
+	for _, w := range wfs {
+		if a.runs.IsRunning(w.ID) {
+			return errors.New("сначала остановите выполняющиеся Workflow этого проекта")
+		}
+	}
+	for _, w := range wfs {
+		a.sched.Deactivate(w.ID)
 	}
 	return a.userError("удаление проекта", s.DeleteProject(a.ctx, id))
 }
@@ -216,21 +270,24 @@ func (a *App) GetWorkflow(id string) (storage.Workflow, error) {
 }
 
 // SaveWorkflow stores the graph. Incomplete graphs may be saved; only hard limits are enforced.
-// It returns the new updatedAt timestamp.
-func (a *App) SaveWorkflow(id string, doc workflow.Document) (int64, error) {
+// If the workflow is active, its triggers are re-armed with the new version.
+func (a *App) SaveWorkflow(id string, doc workflow.Document) (SaveResult, error) {
 	s, err := a.db()
 	if err != nil {
-		return 0, err
+		return SaveResult{}, err
 	}
 	doc.Normalize()
 	if len(doc.Nodes) > validation.MaxNodes || len(doc.Edges) > validation.MaxEdges {
-		return 0, fmt.Errorf("Workflow слишком большой (максимум %d Nodes и %d Connections)", validation.MaxNodes, validation.MaxEdges)
+		return SaveResult{}, fmt.Errorf("Workflow слишком большой (максимум %d Nodes и %d Connections)", validation.MaxNodes, validation.MaxEdges)
 	}
 	if doc.SchemaVersion != workflow.SchemaVersion {
-		return 0, fmt.Errorf("неподдерживаемая версия схемы %d", doc.SchemaVersion)
+		return SaveResult{}, fmt.Errorf("неподдерживаемая версия схемы %d", doc.SchemaVersion)
 	}
 	t, err := s.SaveWorkflowDocument(a.ctx, id, doc)
-	return t, a.userError("сохранение Workflow", err)
+	if err != nil {
+		return SaveResult{}, a.userError("сохранение Workflow", err)
+	}
+	return SaveResult{UpdatedAt: t, Warning: a.rearm(id)}, nil
 }
 
 // RenameWorkflow changes name and description.
@@ -248,6 +305,10 @@ func (a *App) DeleteWorkflow(id string) error {
 	if err != nil {
 		return err
 	}
+	if a.runs.IsRunning(id) {
+		return errors.New("сначала остановите выполнение этого Workflow")
+	}
+	a.sched.Deactivate(id)
 	return a.userError("удаление Workflow", s.DeleteWorkflow(a.ctx, id))
 }
 
@@ -273,12 +334,22 @@ func (a *App) GetSettings() (storage.Settings, error) {
 	return st, a.userError("загрузка настроек", err)
 }
 
-// SaveSettings stores user settings and returns the normalised values.
-func (a *App) SaveSettings(st storage.Settings) (storage.Settings, error) {
+// SaveSettings stores user settings, applies them and re-arms active workflows
+// (e.g. file triggers whose directory is no longer allowed are switched off).
+func (a *App) SaveSettings(st storage.Settings) (SettingsResult, error) {
 	s, err := a.db()
 	if err != nil {
-		return st, err
+		return SettingsResult{Settings: st}, err
 	}
 	saved, err := s.SaveSettings(a.ctx, st)
-	return saved, a.userError("сохранение настроек", err)
+	if err != nil {
+		return SettingsResult{Settings: st}, a.userError("сохранение настроек", err)
+	}
+	a.runs.SetMaxConcurrent(saved.MaxConcurrentRuns)
+	warnings := a.restoreSchedules(a.ctx)
+	if warnings == nil {
+		warnings = []string{}
+	}
+	a.emitter().Emit(events.SchedulerChanged, "")
+	return SettingsResult{Settings: saved, Warnings: warnings}, nil
 }

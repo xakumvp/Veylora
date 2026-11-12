@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"veylora/internal/events"
@@ -106,7 +107,7 @@ func TestSettings(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 	st, _ := s.GetSettings(ctx)
-	if st != DefaultSettings() {
+	if !reflect.DeepEqual(st, DefaultSettings()) {
 		t.Fatalf("defaults: %+v", st)
 	}
 	saved, err := s.SaveSettings(ctx, Settings{AllowLocalNetwork: true, MaxResponseMB: 1000, KeepExecutions: 10})

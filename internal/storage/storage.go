@@ -102,6 +102,18 @@ var migrations = []string{
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	);`,
+	// v2: automation — active workflows, trigger source, schedule state
+	`ALTER TABLE workflows ADD COLUMN active INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE executions ADD COLUMN trigger TEXT NOT NULL DEFAULT 'manual';
+	ALTER TABLE executions ADD COLUMN trigger_node_id TEXT NOT NULL DEFAULT '';
+	CREATE INDEX idx_executions_status ON executions(workflow_id, status);
+	CREATE TABLE schedules (
+		workflow_id   TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+		node_id       TEXT NOT NULL,
+		last_fired_at INTEGER NOT NULL DEFAULT 0,
+		fire_count    INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (workflow_id, node_id)
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

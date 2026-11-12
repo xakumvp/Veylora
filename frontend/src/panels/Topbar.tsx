@@ -10,8 +10,9 @@ import {
   Square,
   Undo2,
   Upload,
+  Zap,
 } from 'lucide-react';
-import { Button, cx, IconButton } from '../components/ui';
+import { Button, cx, IconButton, Toggle } from '../components/ui';
 import { useEditor } from '../stores/editor';
 import { useRun } from '../stores/run';
 import { useUI } from '../stores/ui';
@@ -44,16 +45,18 @@ export function Topbar() {
   const canUndo = useEditor((s) => s.past.length > 0);
   const canRedo = useEditor((s) => s.future.length > 0);
   const { undo, redo, save } = useEditor.getState();
-  const activeRunId = useRun((s) => s.activeRunId);
-  const runWorkflowId = useRun((s) => s.runWorkflowId);
+  const activeRunId = useRun((s) => (workflowId ? s.activeRuns[workflowId] : undefined));
+  const otherRuns = useRun((s) => Object.keys(s.activeRuns).filter((id) => id !== workflowId).length);
   const starting = useRun((s) => s.starting);
   const errorCount = useRun((s) => s.issues.filter((i) => i.severity === 'error').length);
   const activeProjectId = useWorkspace((s) => s.activeProjectId);
-  const { renameWorkflow, importWorkflow, exportWorkflow } = useWorkspace.getState();
+  const automated = useWorkspace((s) => s.isActive(workflowId));
+  const toggling = useWorkspace((s) => s.togglingActive);
+  const nextRun = useWorkspace((s) => s.triggers.find((t) => t.nextRun > 0)?.nextRun);
+  const { renameWorkflow, importWorkflow, exportWorkflow, setActive } = useWorkspace.getState();
   const askText = useUI((s) => s.askText);
 
-  const runningHere = !!activeRunId && runWorkflowId === workflowId;
-  const runningElsewhere = !!activeRunId && !runningHere;
+  const runningHere = !!activeRunId;
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-panel px-3">
@@ -120,14 +123,44 @@ export function Topbar() {
           <AlertTriangle size={13} /> {errorCount}
         </span>
       )}
+      {otherRuns > 0 && (
+        <span className="text-xs whitespace-nowrap text-muted" title="Другие Workflow выполняются в фоне">
+          фоновых запусков: {otherRuns}
+        </span>
+      )}
+      {workflowId && (
+        <label
+          className={cx(
+            'flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-xs transition-colors duration-150',
+            automated
+              ? 'border-success/40 bg-success/10 text-success'
+              : 'border-line text-muted hover:text-fg',
+          )}
+          title={
+            automated
+              ? nextRun
+                ? `Ближайший запуск: ${new Date(nextRun).toLocaleString('ru-RU')}`
+                : 'Триггеры ожидают событий'
+              : 'Включить автоматические триггеры (Cron, Interval, Schedule, File Watcher, Startup)'
+          }
+        >
+          <Zap size={13} className={automated ? 'fill-current' : ''} />
+          Авто
+          <Toggle
+            checked={automated}
+            onChange={(v) => !toggling && void setActive(workflowId, v)}
+            label="Автоматизация"
+          />
+        </label>
+      )}
       <Button
         variant="success"
         icon={
           starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />
         }
         onClick={() => void useRun.getState().start()}
-        disabled={!workflowId || !!activeRunId || starting}
-        title={runningElsewhere ? 'Выполняется другой Workflow' : 'Запустить (Ctrl+Enter)'}
+        disabled={!workflowId || runningHere || starting}
+        title="Запустить (Ctrl+Enter). Если выделен триггер — запуск от него"
       >
         Run
       </Button>
@@ -135,8 +168,8 @@ export function Topbar() {
         variant="danger"
         icon={<Square size={12} fill="currentColor" />}
         onClick={() => void useRun.getState().stop()}
-        disabled={!activeRunId}
-        title="Остановить выполнение"
+        disabled={!runningHere}
+        title="Остановить выполнение этого Workflow"
       >
         Stop
       </Button>

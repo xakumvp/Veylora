@@ -26,8 +26,8 @@ export function ExportWorkflow(arg1) {
   return window['go']['app']['App']['ExportWorkflow'](arg1);
 }
 
-export function GetActiveRun() {
-  return window['go']['app']['App']['GetActiveRun']();
+export function GetActiveRuns() {
+  return window['go']['app']['App']['GetActiveRuns']();
 }
 
 export function GetAppInfo() {
@@ -44,6 +44,14 @@ export function GetNodeDefinitions() {
 
 export function GetSettings() {
   return window['go']['app']['App']['GetSettings']();
+}
+
+export function GetStartupNotices() {
+  return window['go']['app']['App']['GetStartupNotices']();
+}
+
+export function GetTriggers(arg1) {
+  return window['go']['app']['App']['GetTriggers'](arg1);
 }
 
 export function GetWorkflow(arg1) {
@@ -66,6 +74,10 @@ export function ListWorkflows(arg1) {
   return window['go']['app']['App']['ListWorkflows'](arg1);
 }
 
+export function PickDirectory(arg1) {
+  return window['go']['app']['App']['PickDirectory'](arg1);
+}
+
 export function RenameProject(arg1, arg2) {
   return window['go']['app']['App']['RenameProject'](arg1, arg2);
 }
@@ -74,8 +86,8 @@ export function RenameWorkflow(arg1, arg2, arg3) {
   return window['go']['app']['App']['RenameWorkflow'](arg1, arg2, arg3);
 }
 
-export function RunWorkflow(arg1, arg2) {
-  return window['go']['app']['App']['RunWorkflow'](arg1, arg2);
+export function RunWorkflow(arg1, arg2, arg3) {
+  return window['go']['app']['App']['RunWorkflow'](arg1, arg2, arg3);
 }
 
 export function SaveSettings(arg1) {
@@ -86,8 +98,16 @@ export function SaveWorkflow(arg1, arg2) {
   return window['go']['app']['App']['SaveWorkflow'](arg1, arg2);
 }
 
-export function StopWorkflow() {
-  return window['go']['app']['App']['StopWorkflow']();
+export function SetWorkflowActive(arg1, arg2) {
+  return window['go']['app']['App']['SetWorkflowActive'](arg1, arg2);
+}
+
+export function StopRun(arg1) {
+  return window['go']['app']['App']['StopRun'](arg1);
+}
+
+export function StopWorkflow(arg1) {
+  return window['go']['app']['App']['StopWorkflow'](arg1);
 }
 
 export function ValidateWorkflow(arg1) {

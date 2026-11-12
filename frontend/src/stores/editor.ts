@@ -18,7 +18,16 @@ import {
   uniqueName,
   type FlowNode,
 } from '../lib/graph';
-import type { NodeDefinition, Viewport, Workflow, WorkflowDocument } from '../types';
+import type {
+  NodeDefinition,
+  NodeSettings,
+  Viewport,
+  Workflow,
+  WorkflowDocument,
+  WorkflowSettings,
+  WorkflowVariable,
+} from '../types';
+import { toast } from './ui';
 
 const HISTORY_LIMIT = 100;
 const COALESCE_MS = 1200;
@@ -37,6 +46,8 @@ interface EditorState {
   nodes: FlowNode[];
   edges: Edge[];
   viewport?: Viewport;
+  variables: WorkflowVariable[];
+  wfSettings: WorkflowSettings;
   past: Snapshot[];
   future: Snapshot[];
   revision: number;
@@ -58,6 +69,9 @@ interface EditorState {
   renameNode: (id: string, name: string) => void;
   setNodeKey: (id: string, key: string) => void;
   setParam: (id: string, param: string, value: unknown) => void;
+  setNodeSettings: (id: string, settings: NodeSettings | undefined) => void;
+  setVariables: (variables: WorkflowVariable[]) => void;
+  setWorkflowSettings: (settings: WorkflowSettings) => void;
   deleteNodes: (ids: string[]) => void;
   duplicateNode: (id: string) => void;
   selectOnly: (id: string | null) => void;
@@ -101,6 +115,8 @@ export const useEditor = create<EditorState>((set, get) => {
     description: '',
     nodes: [],
     edges: [],
+    variables: [],
+    wfSettings: { timeoutSec: 0 },
     past: [],
     future: [],
     revision: 0,
@@ -116,6 +132,8 @@ export const useEditor = create<EditorState>((set, get) => {
         nodes,
         edges,
         viewport: w.document.viewport,
+        variables: w.document.variables ?? [],
+        wfSettings: w.document.settings ?? { timeoutSec: 0 },
         past: [],
         future: [],
         revision: 0,
@@ -224,6 +242,22 @@ export const useEditor = create<EditorState>((set, get) => {
       changed();
     },
 
+    setNodeSettings: (id, settings) => {
+      coalescedHistory(`${id}:settings`);
+      updateData(id, { settings });
+      changed();
+    },
+
+    setVariables: (variables) => {
+      set({ variables });
+      changed();
+    },
+
+    setWorkflowSettings: (wfSettings) => {
+      set({ wfSettings });
+      changed();
+    },
+
     deleteNodes: (ids) => {
       if (!ids.length) return;
       pushHistory();
@@ -296,9 +330,13 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ saveState: 'saving', saveError: undefined });
       inflight = (async () => {
         try {
-          const savedAt = await api.saveWorkflow(workflowId, get().document());
+          const res = await api.saveWorkflow(workflowId, get().document());
+          if (res.warning) {
+            toast('warning', 'Автоматизация отключена', res.warning);
+            window.dispatchEvent(new CustomEvent('veylora:automation-changed', { detail: workflowId }));
+          }
           if (get().workflowId !== workflowId) return true;
-          set({ saveState: get().revision === revision ? 'saved' : 'dirty', lastSavedAt: savedAt });
+          set({ saveState: get().revision === revision ? 'saved' : 'dirty', lastSavedAt: res.updatedAt });
           return true;
         } catch (err) {
           if (get().workflowId === workflowId) set({ saveState: 'error', saveError: errorMessage(err) });
@@ -311,8 +349,8 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     document: () => {
-      const { nodes, edges, viewport } = get();
-      return toDocument(nodes, edges, viewport);
+      const { nodes, edges, viewport, variables, wfSettings } = get();
+      return toDocument(nodes, edges, viewport, variables, wfSettings);
     },
   };
 });

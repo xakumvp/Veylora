@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { api, errorMessage } from '../services/api';
-import type { AppInfo, NodeDefinition, Project, Settings, WorkflowMeta } from '../types';
+import type { AppInfo, NodeDefinition, Project, Settings, TriggerInfo, WorkflowMeta } from '../types';
 import { useEditor } from './editor';
-import { useRun } from './run';
+import { setTriggerCheck, useRun } from './run';
 import { toast } from './ui';
 
 const LAST_WORKFLOW_KEY = 'veylora:lastWorkflow';
@@ -39,6 +39,9 @@ interface WorkspaceState {
   activeProjectId: string | null;
   activeWorkflowId: string | null;
   opening: boolean;
+  /** Armed triggers of the open workflow. */
+  triggers: TriggerInfo[];
+  togglingActive: boolean;
 
   init: () => Promise<void>;
   toggleProject: (id: string) => void;
@@ -53,6 +56,9 @@ interface WorkspaceState {
   importWorkflow: (projectId: string) => Promise<void>;
   exportWorkflow: () => Promise<void>;
   saveSettings: (s: Settings) => Promise<void>;
+  setActive: (workflowId: string, active: boolean) => Promise<void>;
+  refreshAutomation: (workflowId?: string) => Promise<void>;
+  isActive: (workflowId: string | null) => boolean;
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
@@ -65,6 +71,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   activeProjectId: null,
   activeWorkflowId: null,
   opening: false,
+  triggers: [],
+  togglingActive: false,
 
   init: async () => {
     if (initStarted) return;
@@ -77,10 +85,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         api.getSettings(),
       ]);
       const defByType = Object.fromEntries(definitions.map((d) => [d.type, d]));
+      setTriggerCheck((type) => !!defByType[type]?.trigger);
       const lists = await Promise.all(projects.map((p) => api.listWorkflows(p.id)));
       const workflows = Object.fromEntries(projects.map((p, i) => [p.id, lists[i]]));
       set({ definitions, defByType, projects, workflows, info, settings, ready: true });
       void useRun.getState().syncActive();
+      void api.startupNotices().then((notices) => {
+        for (const n of notices ?? []) toast('warning', 'Расписание не восстановлено', n);
+      });
 
       const all = Object.values(workflows).flat();
       const last = recall();
@@ -177,6 +189,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }));
       remember(w.id);
       void useRun.getState().loadHistory(w.id);
+      void get().refreshAutomation(w.id);
     } catch (err) {
       toast('error', 'Workflow не открыт', errorMessage(err));
     } finally {
@@ -212,7 +225,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       .flat()
       .find((w) => w.id === id);
     if (!meta) return;
-    if (useRun.getState().activeRunId && useRun.getState().runWorkflowId === id) {
+    if (useRun.getState().activeRuns[id]) {
       toast('warning', 'Сначала остановите выполнение');
       return;
     }
@@ -265,11 +278,76 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   saveSettings: async (s) => {
     try {
-      const settings = await api.saveSettings(s);
-      set({ settings });
+      const res = await api.saveSettings(s);
+      set({ settings: res.settings });
       toast('success', 'Настройки сохранены');
+      for (const w of res.warnings ?? []) toast('warning', 'Автоматизация отключена', w);
+      await get().refreshAutomation();
     } catch (err) {
       toast('error', 'Настройки не сохранены', errorMessage(err));
     }
   },
+
+  setActive: async (workflowId, active) => {
+    set({ togglingActive: true });
+    try {
+      if (active && useEditor.getState().workflowId === workflowId) {
+        if (!(await useEditor.getState().save())) throw new Error('не удалось сохранить Workflow');
+      }
+      const res = await api.setActive(workflowId, active);
+      set((s) => ({
+        workflows: Object.fromEntries(
+          Object.entries(s.workflows).map(([pid, list]) => [
+            pid,
+            list.map((w) => (w.id === workflowId ? { ...w, active: res.active } : w)),
+          ]),
+        ),
+        triggers: workflowId === s.activeWorkflowId ? res.triggers : s.triggers,
+      }));
+      if (res.active) {
+        const next = res.triggers.find((t) => t.nextRun > 0);
+        toast(
+          'success',
+          'Автоматизация включена',
+          next
+            ? `Ближайший запуск: ${new Date(next.nextRun).toLocaleString('ru-RU')}`
+            : 'Триггеры ожидают событий',
+        );
+      } else {
+        toast('info', 'Автоматизация выключена');
+      }
+    } catch (err) {
+      toast(
+        'error',
+        active ? 'Не удалось включить автоматизацию' : 'Не удалось выключить',
+        errorMessage(err),
+      );
+    } finally {
+      set({ togglingActive: false });
+    }
+  },
+
+  refreshAutomation: async (workflowId) => {
+    // Re-read active flags (a save or settings change may have switched workflows off).
+    const projects = get().projects;
+    const lists = await Promise.all(projects.map((p) => api.listWorkflows(p.id).catch(() => null)));
+    set((s) => {
+      const workflows = { ...s.workflows };
+      projects.forEach((p, i) => {
+        if (lists[i]) workflows[p.id] = lists[i]!;
+      });
+      return { workflows };
+    });
+    const current = get().activeWorkflowId;
+    if (current && (!workflowId || workflowId === current)) {
+      const triggers = await api.triggers(current).catch(() => []);
+      set({ triggers: triggers ?? [] });
+    }
+  },
+
+  isActive: (workflowId) =>
+    !!workflowId &&
+    Object.values(get().workflows)
+      .flat()
+      .some((w) => w.id === workflowId && w.active),
 }));

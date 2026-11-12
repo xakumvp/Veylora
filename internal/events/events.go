@@ -13,6 +13,10 @@ const (
 	RunFinished = "run:finished"
 	NodeStatus  = "node:status"
 	LogEntry    = "log:entry"
+	// SchedulerChanged is emitted with a workflow ID when its automation state changes.
+	SchedulerChanged = "scheduler:changed"
+	// TriggerSkipped is emitted when an automatic trigger could not start a run.
+	TriggerSkipped = "trigger:skipped"
 )
 
 // Node states.
@@ -24,6 +28,7 @@ const (
 	StatusFailed    = "FAILED"
 	StatusSkipped   = "SKIPPED"
 	StatusCancelled = "CANCELLED"
+	StatusTimeout   = "TIMEOUT"
 )
 
 // RunEvent describes the lifecycle of a whole workflow run.
@@ -31,6 +36,8 @@ type RunEvent struct {
 	RunID      string `json:"runId"`
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
+	Trigger    string `json:"trigger"`
+	TriggerID  string `json:"triggerNodeId,omitempty"`
 	StartedAt  int64  `json:"startedAt"`
 	FinishedAt int64  `json:"finishedAt,omitempty"`
 	DurationMs int64  `json:"durationMs"`
@@ -44,6 +51,8 @@ type NodeEvent struct {
 	Status     string `json:"status"`
 	Branch     string `json:"branch,omitempty"`
 	Error      string `json:"error,omitempty"`
+	Attempts   int    `json:"attempts,omitempty"`
+	Handled    bool   `json:"handled,omitempty"`
 	Output     any    `json:"output,omitempty"`
 	StartedAt  int64  `json:"startedAt,omitempty"`
 	FinishedAt int64  `json:"finishedAt,omitempty"`

@@ -3,7 +3,8 @@ import { api } from '../services/api';
 import { subscribeEngine } from '../services/events';
 import { useEditor } from '../stores/editor';
 import { useRun } from '../stores/run';
-import { useUI } from '../stores/ui';
+import { toast, useUI } from '../stores/ui';
+import { useWorkspace } from '../stores/workspace';
 
 const AUTOSAVE_MS = 800;
 const VALIDATE_MS = 350;
@@ -17,7 +18,27 @@ export function useEngineEvents() {
       onRunFinished: run.onRunFinished,
       onNodeStatus: run.onNodeStatus,
       onLog: run.onLog,
+      onSchedulerChanged: (id) => void useWorkspace.getState().refreshAutomation(id || undefined),
+      onTriggerSkipped: (ev) => {
+        if (ev.workflowId === useEditor.getState().workflowId) {
+          toast('warning', 'Срабатывание триггера пропущено', ev.reason);
+        }
+      },
     });
+  }, []);
+
+  // Saves that switched automation off, and periodic refresh of "next run" times.
+  useEffect(() => {
+    const refresh = () => void useWorkspace.getState().refreshAutomation();
+    window.addEventListener('veylora:automation-changed', refresh);
+    const t = window.setInterval(() => {
+      const ws = useWorkspace.getState();
+      if (ws.isActive(ws.activeWorkflowId)) void ws.refreshAutomation(ws.activeWorkflowId ?? undefined);
+    }, 30_000);
+    return () => {
+      window.removeEventListener('veylora:automation-changed', refresh);
+      window.clearInterval(t);
+    };
   }, []);
 }
 

@@ -195,8 +195,8 @@ func TestHTTPRejectsNonHTTPSchemes(t *testing.T) {
 
 func TestRegistryDefinitions(t *testing.T) {
 	defs := NewRegistry().Definitions()
-	if len(defs) != 5 {
-		t.Fatalf("want 5 node types, got %d", len(defs))
+	if len(defs) != 11 {
+		t.Fatalf("want 11 node types, got %d", len(defs))
 	}
 	if defs[0].Type != TypeManualTrigger {
 		t.Fatalf("Triggers must come first, got %s", defs[0].Type)

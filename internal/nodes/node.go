@@ -21,7 +21,12 @@ type Port struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"`
+	// Role is "error" for the error output that every non-trigger node gets.
+	Role string `json:"role,omitempty"`
 }
+
+// ErrorPortID is the output used when a node fails and its OnError mode is "error_output".
+const ErrorPortID = "error"
 
 // Parameter kinds understood by the Inspector.
 const (
@@ -81,12 +86,33 @@ type Definition struct {
 	Outputs     []Port      `json:"outputs"`
 	Params      []ParamSpec `json:"params"`
 	OutputDoc   []Field     `json:"outputDoc"`
+	// Trigger is the trigger kind ("manual", "cron", "interval", "schedule", "file", "startup")
+	// or empty for regular nodes.
+	Trigger string `json:"trigger,omitempty"`
+}
+
+// IsTrigger reports whether the definition describes a trigger node.
+func (d Definition) IsTrigger() bool { return d.Trigger != "" }
+
+// TriggerEvent describes what started a run.
+type TriggerEvent struct {
+	// Source is "manual", "schedule", "file" or "startup".
+	Source string         `json:"source"`
+	Data   map[string]any `json:"data,omitempty"`
+}
+
+// StopSignal is returned by the Stop Workflow node to end the run early.
+type StopSignal struct {
+	Status  string // events.StatusSuccess or events.StatusFailed
+	Message string
 }
 
 // Env carries application-level limits into executors.
 type Env struct {
 	AllowLocalNetwork bool
 	MaxResponseBytes  int64
+	// AllowedDirectories limits filesystem access (file triggers, future file nodes).
+	AllowedDirectories []string
 }
 
 // LogFunc lets a node write to the Execution Panel.
@@ -100,14 +126,18 @@ type Input struct {
 	Redactor *execution.Redactor
 	Log      LogFunc
 	Env      Env
+	// Event is set for the trigger node that started the run.
+	Event *TriggerEvent
 }
 
 // Result is what a successfully executed node produces.
 type Result struct {
 	// Output is published in the variable context under the node's key.
 	Output map[string]any
-	// Branch is the output port to follow. Empty means "all outputs".
+	// Branch is the output port to follow. Empty means "all regular outputs".
 	Branch string
+	// Stop ends the whole run after this node (Stop Workflow node).
+	Stop *StopSignal
 }
 
 // FieldError is a parameter validation problem.

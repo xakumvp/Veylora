@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, History, ScrollText, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, History, RotateCcw, ScrollText, Trash2 } from 'lucide-react';
 import { cx, IconButton } from '../components/ui';
 import { canvasBridge } from '../lib/canvasBridge';
 import { levelMeta, statusMeta } from '../nodes/status';
-import { formatDuration, useRun } from '../stores/run';
+import { formatDuration, triggerLabels, useRun } from '../stores/run';
 import { useUI } from '../stores/ui';
 import type { LogEntry, NodeStatus } from '../types';
 
@@ -88,8 +88,9 @@ export function ExecutionPanel() {
   const logs = useRun((s) => s.logs);
   const executions = useRun((s) => s.executions);
   const shownRunId = useRun((s) => s.shownRunId);
-  const activeRunId = useRun((s) => s.activeRunId);
+  const activeRunId = useRun((s) => (s.runWorkflowId ? s.activeRuns[s.runWorkflowId] : undefined));
   const [tab, setTab] = useState<'logs' | 'history'>('logs');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'bad'>('all');
   const [levels, setLevels] = useState<Record<string, boolean>>({
     DEBUG: false,
     INFO: true,
@@ -250,27 +251,69 @@ export function ExecutionPanel() {
 
       {open && tab === 'history' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {executions.map((ex) => (
-            <button
-              key={ex.id}
-              onClick={() => {
-                void useRun.getState().showExecution(ex);
-                setTab('logs');
-              }}
-              className={cx(
-                'flex w-full items-center gap-4 border-b border-line/50 px-3 py-1.5 text-left text-xs transition-colors duration-150 hover:bg-panel-2/60',
-                ex.id === shownRunId && 'bg-accent-soft',
-              )}
-            >
-              <span className="w-28 shrink-0">
-                <StatusChip status={ex.id === activeRunId ? 'RUNNING' : ex.status} />
-              </span>
-              <span className="w-32 shrink-0 text-muted">{dateTime(ex.startedAt)}</span>
-              <span className="w-20 shrink-0 font-mono text-muted">{formatDuration(ex.durationMs)}</span>
-              <span className="min-w-0 flex-1 truncate text-error">{ex.error}</span>
-              <span className="shrink-0 font-mono text-[10px] text-faint">{ex.id.slice(0, 8)}</span>
-            </button>
-          ))}
+          <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-line bg-panel px-3 py-1.5">
+            {(
+              [
+                ['all', 'Все'],
+                ['ok', 'Успешные'],
+                ['bad', 'С ошибками'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setStatusFilter(id)}
+                className={cx(
+                  'rounded px-2 py-0.5 text-[11px] transition-colors duration-150',
+                  statusFilter === id ? 'bg-elevated text-fg' : 'text-muted hover:text-fg',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {executions
+            .filter((ex) =>
+              statusFilter === 'all'
+                ? true
+                : statusFilter === 'ok'
+                  ? ex.status === 'SUCCESS'
+                  : ['FAILED', 'TIMEOUT', 'CANCELLED'].includes(ex.status),
+            )
+            .map((ex) => (
+              <div
+                key={ex.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  void useRun.getState().showExecution(ex);
+                  setTab('logs');
+                }}
+                className={cx(
+                  'group flex w-full cursor-pointer items-center gap-4 border-b border-line/50 px-3 py-1.5 text-left text-xs transition-colors duration-150 hover:bg-panel-2/60',
+                  ex.id === shownRunId && 'bg-accent-soft',
+                )}
+              >
+                <span className="w-28 shrink-0">
+                  <StatusChip status={ex.id === activeRunId ? 'RUNNING' : ex.status} />
+                </span>
+                <span className="w-32 shrink-0 text-muted">{dateTime(ex.startedAt)}</span>
+                <span className="w-20 shrink-0 font-mono text-muted">{formatDuration(ex.durationMs)}</span>
+                <span className="w-20 shrink-0 text-faint">{triggerLabels[ex.trigger] ?? ex.trigger}</span>
+                <span className="min-w-0 flex-1 truncate text-error">{ex.error}</span>
+                <button
+                  className="hidden shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted group-hover:flex hover:bg-elevated hover:text-fg disabled:opacity-40"
+                  disabled={!!activeRunId}
+                  title="Запустить снова от того же триггера (текущая версия Workflow)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void useRun.getState().start(ex.triggerNodeId || undefined);
+                  }}
+                >
+                  <RotateCcw size={11} /> Повторить
+                </button>
+                <span className="shrink-0 font-mono text-[10px] text-faint">{ex.id.slice(0, 8)}</span>
+              </div>
+            ))}
           {executions.length === 0 && (
             <div className="flex h-full items-center justify-center text-xs text-faint">
               Запусков пока не было

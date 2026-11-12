@@ -107,7 +107,7 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
       )}
     >
       {def?.inputs.map((p) => (
-        <Handle key={p.id} id={p.id} type="target" position={Position.Left} className="!top-[26px]" />
+        <Handle key={p.id} id={p.id} type="target" position={Position.Left} className="!top-6.5" />
       ))}
 
       <div className="flex items-center gap-2.5 px-3 pt-2.5 pb-2">
@@ -159,7 +159,7 @@ function VeyloraNodeImpl({ id, data, selected }: NodeProps<FlowNode>) {
         </div>
       ) : (
         outputs.map((p) => (
-          <Handle key={p.id} id={p.id} type="source" position={Position.Right} className="!top-[26px]" />
+          <Handle key={p.id} id={p.id} type="source" position={Position.Right} className="!top-6.5" />
         ))
       )}
     </div>

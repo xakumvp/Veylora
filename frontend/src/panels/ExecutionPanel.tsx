@@ -59,7 +59,9 @@ function LogRow({ l }: { l: LogEntry }) {
         ) : (
           <span className="w-0 shrink-0" />
         )}
-        <span className="selectable min-w-0 flex-1 break-words whitespace-pre-wrap text-fg">{l.message}</span>
+        <span className="selectable min-w-0 flex-1 wrap-break-word whitespace-pre-wrap text-fg">
+          {l.message}
+        </span>
         {hasData && (
           <button className="shrink-0 text-faint hover:text-fg" onClick={() => setOpen(!open)}>
             {open ? 'скрыть' : 'данные'}
@@ -67,7 +69,7 @@ function LogRow({ l }: { l: LogEntry }) {
         )}
       </div>
       {open && hasData && (
-        <pre className="selectable mt-1 mb-1 ml-[12.5rem] overflow-x-auto rounded border border-line bg-bg p-2 text-muted">
+        <pre className="selectable mt-1 mb-1 ml-50 overflow-x-auto rounded border border-line bg-bg p-2 text-muted">
           {JSON.stringify(l.data, null, 2)}
         </pre>
       )}

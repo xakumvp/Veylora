@@ -151,7 +151,7 @@ export function Toggle({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={cx(
-        'relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-150',
+        'relative inline-flex h-4.5 w-8 shrink-0 items-center rounded-full transition-colors duration-150',
         checked ? 'bg-accent' : 'bg-line-strong',
       )}
     >
@@ -187,7 +187,7 @@ export function Modal({
   onClose,
   children,
   footer,
-  width = 'w-[420px]',
+  width = 'w-105',
 }: {
   title: string;
   onClose: () => void;

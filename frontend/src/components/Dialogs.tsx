@@ -90,7 +90,7 @@ function SettingsDialog() {
   return (
     <Modal
       title="Settings"
-      width="w-[480px]"
+      width="w-120"
       onClose={() => setOpen(false)}
       footer={
         <>
@@ -210,7 +210,7 @@ function Toasts() {
   const dismiss = useUI((s) => s.dismissToast);
   return (
     <div
-      className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[360px] flex-col gap-2"
+      className="pointer-events-none fixed right-4 bottom-4 z-60 flex w-90 flex-col gap-2"
       aria-live="polite"
     >
       {toasts.map((t) => (
@@ -230,7 +230,7 @@ function Toasts() {
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-medium">{t.title}</div>
             {t.message && (
-              <div className="selectable mt-0.5 line-clamp-4 text-xs leading-snug break-words text-muted">
+              <div className="selectable mt-0.5 line-clamp-4 text-xs leading-snug wrap-break-word text-muted">
                 {t.message}
               </div>
             )}

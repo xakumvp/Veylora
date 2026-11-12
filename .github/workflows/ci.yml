@@ -13,13 +13,13 @@ jobs:
     name: Lint, test, build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -28,6 +28,10 @@ jobs:
       - name: Frontend — install
         working-directory: frontend
         run: npm ci
+
+      - name: Frontend — audit dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Frontend — lint, format, typecheck
         working-directory: frontend
@@ -39,6 +43,9 @@ jobs:
       - name: Frontend — build
         working-directory: frontend
         run: npm run build
+
+      - name: Go — verify module checksums
+        run: go mod verify
 
       - name: Go — vet
         run: go vet . ./internal/...
@@ -52,7 +59,7 @@ jobs:
       - name: Build Windows app
         run: wails build -skipbindings -ldflags "-X main.version=ci-${{ github.sha }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Veylora-windows-${{ github.sha }}
           path: build/bin/Veylora.exe

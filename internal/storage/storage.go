@@ -114,6 +114,20 @@ var migrations = []string{
 		fire_count    INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (workflow_id, node_id)
 	);`,
+	// v3: workflow version history
+	`CREATE TABLE workflow_versions (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		workflow_id   TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+		number        INTEGER NOT NULL,
+		description   TEXT NOT NULL DEFAULT '',
+		source        TEXT NOT NULL,
+		nodes         INTEGER NOT NULL DEFAULT 0,
+		edges         INTEGER NOT NULL DEFAULT 0,
+		fingerprint   TEXT NOT NULL,
+		workflow_json TEXT NOT NULL,
+		created_at    INTEGER NOT NULL,
+		UNIQUE (workflow_id, number)
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

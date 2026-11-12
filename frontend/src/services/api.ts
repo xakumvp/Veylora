@@ -3,6 +3,7 @@ import * as Go from '../wailsjs/go/app/App';
 import type {
   ActivationResult,
   ActiveRun,
+  DiffResult,
   AppInfo,
   Execution,
   ExportResult,
@@ -15,6 +16,7 @@ import type {
   Settings,
   SettingsResult,
   TriggerInfo,
+  VersionMeta,
   Workflow,
   WorkflowDocument,
   WorkflowMeta,
@@ -59,6 +61,16 @@ export const api = {
   exportWorkflow: (id: string) => Go.ExportWorkflow(id) as Promise<ExportResult | null>,
   importWorkflow: (projectId: string) =>
     Go.ImportWorkflow(projectId) as unknown as Promise<ImportResult | null>,
+
+  createVersion: (workflowId: string, description: string) =>
+    Go.CreateVersion(workflowId, description) as Promise<VersionMeta>,
+  listVersions: (workflowId: string) => Go.ListVersions(workflowId) as Promise<VersionMeta[]>,
+  compareVersion: (workflowId: string, versionId: number) =>
+    Go.CompareVersion(workflowId, versionId) as unknown as Promise<DiffResult>,
+  restoreVersion: (workflowId: string, versionId: number) =>
+    Go.RestoreVersion(workflowId, versionId) as unknown as Promise<Workflow>,
+  exportVersion: (workflowId: string, versionId: number) =>
+    Go.ExportVersion(workflowId, versionId) as Promise<ExportResult | null>,
 
   getSettings: () => Go.GetSettings() as Promise<Settings>,
   saveSettings: (s: Settings) => Go.SaveSettings(asGo(s)) as unknown as Promise<SettingsResult>,

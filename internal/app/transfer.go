@@ -41,11 +41,16 @@ func (a *App) ExportWorkflow(id string) (*ExportResult, error) {
 	if err != nil {
 		return nil, a.userError("экспорт", err)
 	}
-	file, err := workflow.BuildExport(w.Name, w.Description, a.version, w.Document)
+	return a.exportDocument(w.Name, w.Description, w.Document)
+}
+
+// exportDocument asks for a file name and writes a secret-free export file.
+func (a *App) exportDocument(title, description string, doc workflow.Document) (*ExportResult, error) {
+	file, err := workflow.BuildExport(title, description, a.version, doc)
 	if err != nil {
 		return nil, a.userError("экспорт", err)
 	}
-	name := strings.TrimSpace(unsafeFileChars.ReplaceAllString(w.Name, "_"))
+	name := strings.TrimSpace(unsafeFileChars.ReplaceAllString(title, "_"))
 	if name == "" {
 		name = "workflow"
 	}
@@ -125,6 +130,9 @@ func (a *App) importData(projectID string, data []byte, s *storage.Store) (*Impo
 	w, err := s.CreateWorkflow(a.ctx, projectID, file.Name, file.Description, file.Workflow)
 	if err != nil {
 		return nil, a.userError("импорт", err)
+	}
+	if _, _, err := s.CreateVersion(a.ctx, w.ID, w.Document, storage.VersionImport, "Импорт из файла"); err != nil {
+		a.logger.Warn("import version", "error", err)
 	}
 	return &ImportResult{Workflow: w.WorkflowMeta, Warnings: warnings}, nil
 }

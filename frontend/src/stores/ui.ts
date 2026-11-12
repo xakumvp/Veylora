@@ -25,6 +25,14 @@ interface ConfirmRequest {
   resolve: (ok: boolean) => void;
 }
 
+export interface ContextMenuState {
+  x: number;
+  y: number;
+  kind: 'node' | 'pane';
+  nodeId?: string;
+  flow?: { x: number; y: number };
+}
+
 interface UIState {
   toasts: Toast[];
   prompt: PromptRequest | null;
@@ -32,6 +40,9 @@ interface UIState {
   settingsOpen: boolean;
   aboutOpen: boolean;
   executionPanelOpen: boolean;
+  contextMenu: ContextMenuState | null;
+  paletteOpen: boolean;
+  versionsOpen: boolean;
 
   toast: (kind: ToastKind, title: string, message?: string) => void;
   dismissToast: (id: number) => void;
@@ -42,6 +53,9 @@ interface UIState {
   setSettingsOpen: (open: boolean) => void;
   setAboutOpen: (open: boolean) => void;
   setExecutionPanelOpen: (open: boolean) => void;
+  openContextMenu: (m: ContextMenuState | null) => void;
+  setPaletteOpen: (open: boolean) => void;
+  setVersionsOpen: (open: boolean) => void;
 }
 
 let toastSeq = 0;
@@ -53,6 +67,9 @@ export const useUI = create<UIState>((set, get) => ({
   settingsOpen: false,
   aboutOpen: false,
   executionPanelOpen: true,
+  contextMenu: null,
+  paletteOpen: false,
+  versionsOpen: false,
 
   toast: (kind, title, message) => {
     const id = ++toastSeq;
@@ -83,6 +100,9 @@ export const useUI = create<UIState>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setAboutOpen: (aboutOpen) => set({ aboutOpen }),
   setExecutionPanelOpen: (executionPanelOpen) => set({ executionPanelOpen }),
+  openContextMenu: (contextMenu) => set({ contextMenu }),
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen, contextMenu: null }),
+  setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
 }));
 
 export const toast = (kind: ToastKind, title: string, message?: string) =>

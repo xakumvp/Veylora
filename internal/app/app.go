@@ -287,6 +287,7 @@ func (a *App) SaveWorkflow(id string, doc workflow.Document) (SaveResult, error)
 	if err != nil {
 		return SaveResult{}, a.userError("сохранение Workflow", err)
 	}
+	a.autoVersion(a.ctx, id, doc)
 	return SaveResult{UpdatedAt: t, Warning: a.rearm(id)}, nil
 }
 

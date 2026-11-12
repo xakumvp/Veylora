@@ -99,8 +99,42 @@ export function useShortcuts() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const ui = useUI.getState();
-      if (ui.prompt || ui.confirm || ui.settingsOpen || ui.aboutOpen) return;
+      if (ui.prompt || ui.confirm || ui.settingsOpen || ui.aboutOpen || ui.paletteOpen || ui.versionsOpen)
+        return;
       const key = e.key.toLowerCase();
+      const editor = useEditor.getState();
+      if (mod && (key === 'k' || key === 'f')) {
+        e.preventDefault();
+        ui.setPaletteOpen(true);
+        return;
+      }
+      if (mod && e.shiftKey && key === 'l') {
+        e.preventDefault();
+        editor.layout();
+        return;
+      }
+      if (mod && !isTyping(e.target) && editor.workflowId) {
+        if (key === 'c') {
+          e.preventDefault();
+          void editor.copySelection().then((n) => n && toast('info', `Скопировано Nodes: ${n}`));
+          return;
+        }
+        if (key === 'x') {
+          e.preventDefault();
+          void editor.cutSelection();
+          return;
+        }
+        if (key === 'v') {
+          e.preventDefault();
+          void editor.paste();
+          return;
+        }
+        if (key === 'a') {
+          e.preventDefault();
+          editor.selectAll();
+          return;
+        }
+      }
       if (mod && key === 's') {
         e.preventDefault();
         void useEditor.getState().save();

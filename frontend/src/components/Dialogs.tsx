@@ -4,7 +4,10 @@ import { api } from '../services/api';
 import { useUI } from '../stores/ui';
 import { useWorkspace } from '../stores/workspace';
 import type { Settings } from '../types';
+import { CommandPalette } from './CommandPalette';
+import { ContextMenu } from './ContextMenu';
 import { Logo } from './icons';
+import { VersionsDialog } from './VersionsDialog';
 import { Button, cx, Input, Modal, Toggle } from './ui';
 
 function PromptDialog() {
@@ -354,6 +357,9 @@ export function Overlays() {
       <ConfirmDialog />
       <SettingsDialog />
       <AboutDialog />
+      <ContextMenu />
+      <VersionsDialog />
+      <CommandPalette />
       <Toasts />
     </>
   );

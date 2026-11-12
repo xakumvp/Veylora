@@ -19,7 +19,7 @@ import { NODE_TYPE, wouldCreateCycle, type FlowNode } from '../lib/graph';
 import { useEditor } from '../stores/editor';
 import { useRun } from '../stores/run';
 import { useWorkspace } from '../stores/workspace';
-import { toast } from '../stores/ui';
+import { toast, useUI } from '../stores/ui';
 import { VeyloraNode } from '../nodes/VeyloraNode';
 
 const nodeTypes = { [NODE_TYPE]: VeyloraNode };
@@ -48,6 +48,7 @@ function FlowCanvas() {
         const p = flow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
         return { x: p.x - 120 + jitter(), y: p.y - 40 + jitter() };
       },
+      fitView: () => void flow.fitView({ padding: 0.12, maxZoom: 1, duration: 300 }),
       focusNode: (id) => {
         const n = flow.getNode(id);
         if (!n) return;
@@ -142,6 +143,25 @@ function FlowCanvas() {
       onSelectionDragStart={beginDrag}
       onMoveEnd={(event, vp) => event && setViewport(vp)}
       onDrop={onDrop}
+      onNodeContextMenu={(e, node) => {
+        e.preventDefault();
+        if (!node.selected) useEditor.getState().selectOnly(node.id);
+        useUI.getState().openContextMenu({ x: e.clientX, y: e.clientY, kind: 'node', nodeId: node.id });
+      }}
+      onSelectionContextMenu={(e, sel) => {
+        e.preventDefault();
+        useUI.getState().openContextMenu({ x: e.clientX, y: e.clientY, kind: 'node', nodeId: sel[0]?.id });
+      }}
+      onPaneContextMenu={(e) => {
+        e.preventDefault();
+        useUI.getState().openContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          kind: 'pane',
+          flow: flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+        });
+      }}
+      onPaneClick={() => useUI.getState().openContextMenu(null)}
       onDragOver={onDragOver}
       defaultViewport={viewport}
       fitView={!viewport}

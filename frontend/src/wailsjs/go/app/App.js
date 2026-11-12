@@ -6,8 +6,16 @@ export function ClearExecutions(arg1) {
   return window['go']['app']['App']['ClearExecutions'](arg1);
 }
 
+export function CompareVersion(arg1, arg2) {
+  return window['go']['app']['App']['CompareVersion'](arg1, arg2);
+}
+
 export function CreateProject(arg1) {
   return window['go']['app']['App']['CreateProject'](arg1);
+}
+
+export function CreateVersion(arg1, arg2) {
+  return window['go']['app']['App']['CreateVersion'](arg1, arg2);
 }
 
 export function CreateWorkflow(arg1, arg2) {
@@ -20,6 +28,10 @@ export function DeleteProject(arg1) {
 
 export function DeleteWorkflow(arg1) {
   return window['go']['app']['App']['DeleteWorkflow'](arg1);
+}
+
+export function ExportVersion(arg1, arg2) {
+  return window['go']['app']['App']['ExportVersion'](arg1, arg2);
 }
 
 export function ExportWorkflow(arg1) {
@@ -70,6 +82,10 @@ export function ListProjects() {
   return window['go']['app']['App']['ListProjects']();
 }
 
+export function ListVersions(arg1) {
+  return window['go']['app']['App']['ListVersions'](arg1);
+}
+
 export function ListWorkflows(arg1) {
   return window['go']['app']['App']['ListWorkflows'](arg1);
 }
@@ -84,6 +100,10 @@ export function RenameProject(arg1, arg2) {
 
 export function RenameWorkflow(arg1, arg2, arg3) {
   return window['go']['app']['App']['RenameWorkflow'](arg1, arg2, arg3);
+}
+
+export function RestoreVersion(arg1, arg2) {
+  return window['go']['app']['App']['RestoreVersion'](arg1, arg2);
 }
 
 export function RunWorkflow(arg1, arg2, arg3) {

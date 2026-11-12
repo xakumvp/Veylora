@@ -8,6 +8,8 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 import { api, errorMessage } from '../services/api';
+import { preparePaste, readClipboard, serializeSelection, writeClipboard } from '../lib/clipboard';
+import { autoLayout } from '../lib/layout';
 import {
   defaultParams,
   fromDocument,
@@ -75,6 +77,11 @@ interface EditorState {
   deleteNodes: (ids: string[]) => void;
   duplicateNode: (id: string) => void;
   selectOnly: (id: string | null) => void;
+  selectAll: () => void;
+  copySelection: () => Promise<number>;
+  cutSelection: () => Promise<void>;
+  paste: (at?: { x: number; y: number }) => Promise<number>;
+  layout: () => void;
 
   undo: () => void;
   redo: () => void;
@@ -292,6 +299,47 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     selectOnly: (id) => set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: n.id === id })) })),
+
+    selectAll: () => set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) })),
+
+    copySelection: async () => {
+      const text = serializeSelection(get().nodes, get().edges);
+      if (!text) return 0;
+      await writeClipboard(text);
+      return get().nodes.filter((n) => n.selected).length;
+    },
+
+    cutSelection: async () => {
+      const ids = get()
+        .nodes.filter((n) => n.selected)
+        .map((n) => n.id);
+      if (!ids.length) return;
+      await get().copySelection();
+      get().deleteNodes(ids);
+    },
+
+    paste: async (at) => {
+      if (!get().workflowId) return 0;
+      const payload = await readClipboard();
+      if (!payload?.nodes.length) return 0;
+      pushHistory();
+      const { nodes, edges } = preparePaste(payload, get().nodes, at);
+      set((s) => ({
+        nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...nodes],
+        edges: [...s.edges, ...edges],
+      }));
+      changed();
+      return nodes.length;
+    },
+
+    layout: () => {
+      const { nodes, edges } = get();
+      if (!nodes.length) return;
+      pushHistory();
+      const pos = autoLayout(nodes, edges);
+      set({ nodes: nodes.map((n) => (pos.has(n.id) ? { ...n, position: pos.get(n.id)! } : n)) });
+      changed();
+    },
 
     undo: () => {
       const { past, future, nodes, edges } = get();

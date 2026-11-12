@@ -467,6 +467,32 @@ export namespace storage {
 	        this.allowedEnvVars = source["allowedEnvVars"];
 	    }
 	}
+	export class VersionMeta {
+	    id: number;
+	    workflowId: string;
+	    number: number;
+	    description: string;
+	    source: string;
+	    nodes: number;
+	    edges: number;
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new VersionMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workflowId = source["workflowId"];
+	        this.number = source["number"];
+	        this.description = source["description"];
+	        this.source = source["source"];
+	        this.nodes = source["nodes"];
+	        this.edges = source["edges"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
 	export class Workflow {
 	    id: string;
 	    projectId: string;
@@ -565,6 +591,82 @@ export namespace validation {
 
 export namespace workflow {
 	
+	export class NodeChange {
+	    id: string;
+	    name: string;
+	    fields: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.fields = source["fields"];
+	    }
+	}
+	export class NodeRef {
+	    id: string;
+	    name: string;
+	    type: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	    }
+	}
+	export class DiffResult {
+	    addedNodes: NodeRef[];
+	    removedNodes: NodeRef[];
+	    changedNodes: NodeChange[];
+	    addedEdges: number;
+	    removedEdges: number;
+	    variablesChanged: boolean;
+	    settingsChanged: boolean;
+	    identical: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.addedNodes = this.convertValues(source["addedNodes"], NodeRef);
+	        this.removedNodes = this.convertValues(source["removedNodes"], NodeRef);
+	        this.changedNodes = this.convertValues(source["changedNodes"], NodeChange);
+	        this.addedEdges = source["addedEdges"];
+	        this.removedEdges = source["removedEdges"];
+	        this.variablesChanged = source["variablesChanged"];
+	        this.settingsChanged = source["settingsChanged"];
+	        this.identical = source["identical"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Viewport {
 	    x: number;
 	    y: number;
@@ -775,6 +877,8 @@ export namespace workflow {
 		    return a;
 		}
 	}
+	
+	
 	
 	
 	

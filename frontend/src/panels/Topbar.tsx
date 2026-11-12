@@ -3,6 +3,7 @@ import {
   Check,
   CloudOff,
   Download,
+  History,
   Loader2,
   Play,
   Redo2,
@@ -93,6 +94,13 @@ export function Topbar() {
         </IconButton>
         <IconButton label="Сохранить (Ctrl+S)" onClick={() => void save()} disabled={!workflowId}>
           <Save size={16} />
+        </IconButton>
+        <IconButton
+          label="История версий"
+          onClick={() => useUI.getState().setVersionsOpen(true)}
+          disabled={!workflowId}
+        >
+          <History size={16} />
         </IconButton>
         <div className="mx-1.5 h-5 w-px bg-line" />
         <Button

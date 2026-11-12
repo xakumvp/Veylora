@@ -249,3 +249,25 @@ export interface VNodeData extends Record<string, unknown> {
   params: Params;
   settings?: NodeSettings;
 }
+
+export interface VersionMeta {
+  id: number;
+  workflowId: string;
+  number: number;
+  description: string;
+  source: 'manual' | 'auto' | 'restore' | 'import';
+  nodes: number;
+  edges: number;
+  createdAt: number;
+}
+
+export interface DiffResult {
+  addedNodes: { id: string; name: string; type: string }[];
+  removedNodes: { id: string; name: string; type: string }[];
+  changedNodes: { id: string; name: string; fields: string[] }[];
+  addedEdges: number;
+  removedEdges: number;
+  variablesChanged: boolean;
+  settingsChanged: boolean;
+  identical: boolean;
+}

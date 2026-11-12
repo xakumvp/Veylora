@@ -3,6 +3,7 @@
 export interface CanvasBridge {
   centerPosition: () => { x: number; y: number };
   focusNode: (id: string) => void;
+  fitView: () => void;
 }
 
 let bridge: CanvasBridge | null = null;
@@ -16,6 +17,9 @@ export const canvasBridge = {
   },
   focusNode(id: string) {
     bridge?.focusNode(id);
+  },
+  fitView() {
+    bridge?.fitView();
   },
 };
 

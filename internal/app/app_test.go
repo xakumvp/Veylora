@@ -188,3 +188,37 @@ func TestActivationLifecycle(t *testing.T) {
 		t.Fatalf("restore failed: %v", problems)
 	}
 }
+
+func TestVersionHistory(t *testing.T) {
+	a := testApp(t)
+	p, _ := a.CreateProject("V")
+	w, _ := a.CreateWorkflow(p.ID, "Versions")
+
+	doc := starterDocument()
+	if _, err := a.SaveWorkflow(w.ID, doc); err != nil { // first save → automatic v1
+		t.Fatal(err)
+	}
+	v2, err := a.CreateVersion(w.ID, "  Только триггер  ")
+	if err != nil || v2.Number != 2 || v2.Description != "Только триггер" {
+		t.Fatalf("manual version: %+v %v", v2, err)
+	}
+
+	doc.Nodes = append(doc.Nodes, workflow.Node{ID: "log", Type: "logging.logger", Name: "Log", Key: "log",
+		Params: map[string]any{"message": "x", "level": "INFO"}, Position: workflow.Position{X: 300, Y: 200}})
+	if _, err := a.SaveWorkflow(w.ID, doc); err != nil {
+		t.Fatal(err)
+	}
+	diff, err := a.CompareVersion(w.ID, v2.ID)
+	if err != nil || len(diff.AddedNodes) != 1 {
+		t.Fatalf("diff: %+v %v", diff, err)
+	}
+
+	restored, err := a.RestoreVersion(w.ID, v2.ID)
+	if err != nil || len(restored.Document.Nodes) != 1 {
+		t.Fatalf("restore: %v nodes=%d", err, len(restored.Document.Nodes))
+	}
+	list, _ := a.ListVersions(w.ID)
+	if len(list) != 3 || list[0].Source != "restore" || list[0].Nodes != 2 {
+		t.Fatalf("history after restore: %+v", list)
+	}
+}

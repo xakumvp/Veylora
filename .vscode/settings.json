@@ -1,0 +1,21 @@
+{
+  "editor.formatOnSave": true,
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[go]": { "editor.defaultFormatter": "golang.go" },
+  "prettier.prettierPath": "./frontend/node_modules/prettier",
+  "eslint.workingDirectories": ["./frontend"],
+  "tailwindCSS.experimental.configFile": "frontend/src/index.css",
+  "files.associations": { "*.css": "tailwindcss" },
+  "go.testFlags": ["-count=1"],
+  "search.exclude": {
+    "**/node_modules": true,
+    "frontend/dist": true,
+    "frontend/src/wailsjs": true
+  },
+  "yaml.schemas": {
+    "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml"
+  }
+}

@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Test
+        run: go test -count=1 ./internal/...
+
+      - name: Install Wails CLI and NSIS
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) { choco install nsis -y --no-progress }
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Build app and installer
+        shell: pwsh
+        run: wails build -clean -nsis -ldflags "-X main.version=${{ github.ref_name }}"
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-release | Out-Null
+          Copy-Item build/bin/Veylora.exe "dist-release/Veylora-${{ github.ref_name }}-windows-amd64-portable.exe"
+          Get-ChildItem build/bin -Filter "*installer*.exe" | ForEach-Object {
+            Copy-Item $_.FullName "dist-release/Veylora-${{ github.ref_name }}-windows-amd64-setup.exe"
+          }
+          Get-ChildItem dist-release | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name
+          } | Out-File dist-release/SHA256SUMS.txt -Encoding ascii
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          generate_release_notes: true
+          draft: true

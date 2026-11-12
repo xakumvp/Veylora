@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Veylora",
+  "outputfilename": "Veylora",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./frontend/src",
+  "author": {
+    "name": "Veylora contributors"
+  },
+  "info": {
+    "companyName": "Veylora",
+    "productName": "Veylora",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 Veylora contributors",
+    "comments": "Visual desktop automation"
+  }
+}

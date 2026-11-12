@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, test, build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend — install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend — lint, format, typecheck
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run format:check
+          npm run typecheck
+
+      - name: Frontend — build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Go — vet
+        run: go vet . ./internal/...
+
+      - name: Go — test
+        run: go test -count=1 ./internal/...
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+
+      - name: Build Windows app
+        run: wails build -skipbindings -ldflags "-X main.version=ci-${{ github.sha }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Veylora-windows-${{ github.sha }}
+          path: build/bin/Veylora.exe
+          retention-days: 14

@@ -1,0 +1,75 @@
+{
+  "format": "veylora.workflow",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-12T00:00:00Z",
+  "app": "Veylora 0.1.0",
+  "name": "Пример: API с токеном",
+  "description": "POST-запрос с заголовком Authorization. Токен удалён при экспорте — впишите свой в Inspector.",
+  "workflow": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "trigger.manual",
+        "name": "Manual Trigger",
+        "key": "trigger",
+        "params": { "runName": "Отправка данных" },
+        "position": { "x": 40, "y": 160 }
+      },
+      {
+        "id": "post",
+        "type": "http.request",
+        "name": "Создать запись",
+        "key": "http",
+        "params": {
+          "method": "POST",
+          "url": "https://httpbin.org/anything",
+          "query": [{ "key": "source", "value": "veylora", "enabled": true }],
+          "headers": [
+            { "key": "Authorization", "value": "", "enabled": true },
+            { "key": "Accept", "value": "application/json", "enabled": true }
+          ],
+          "body": "{\"run\": \"{{trigger.runName}}\", \"id\": \"{{trigger.runId}}\"}",
+          "timeout": 20,
+          "failOnError": true
+        },
+        "position": { "x": 320, "y": 160 }
+      },
+      {
+        "id": "empty",
+        "type": "logic.condition",
+        "name": "Ответ пустой?",
+        "key": "check",
+        "params": { "variable": "{{http.body.json}}", "operator": "is_empty", "value": "" },
+        "position": { "x": 600, "y": 160 }
+      },
+      {
+        "id": "warn",
+        "type": "logging.logger",
+        "name": "Пустой ответ",
+        "key": "log_empty",
+        "params": { "message": "Сервер не вернул тело JSON", "level": "WARNING", "variables": [] },
+        "position": { "x": 880, "y": 60 }
+      },
+      {
+        "id": "done",
+        "type": "logging.logger",
+        "name": "Готово",
+        "key": "log_done",
+        "params": {
+          "message": "Отправлено: {{http.body.json.run}} (статус {{http.status}})",
+          "level": "INFO",
+          "variables": [{ "key": "headers", "value": "{{http.body.headers}}", "enabled": true }]
+        },
+        "position": { "x": 880, "y": 260 }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "trigger", "sourceHandle": "out", "target": "post", "targetHandle": "in" },
+      { "id": "e2", "source": "post", "sourceHandle": "out", "target": "empty", "targetHandle": "in" },
+      { "id": "e3", "source": "empty", "sourceHandle": "true", "target": "warn", "targetHandle": "in" },
+      { "id": "e4", "source": "empty", "sourceHandle": "false", "target": "done", "targetHandle": "in" }
+    ]
+  },
+  "removedSecrets": ["Создать запись → headers: Authorization"]
+}

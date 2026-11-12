@@ -1,0 +1,16 @@
+{
+  "recommendations": [
+    "golang.go",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "EditorConfig.EditorConfig",
+    "redhat.vscode-yaml",
+    "alexcvzz.vscode-sqlite",
+    "usernamehw.errorlens",
+    "eamodio.gitlens",
+    "christian-kohler.path-intellisense",
+    "mikestead.dotenv",
+    "yoavbls.pretty-ts-errors"
+  ]
+}

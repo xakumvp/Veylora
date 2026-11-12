@@ -1,0 +1,80 @@
+{
+  "format": "veylora.workflow",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-12T00:00:00Z",
+  "app": "Veylora 0.1.0",
+  "name": "Пример: HTTP + Condition",
+  "description": "Запрашивает задачу из публичного API, проверяет статус и пишет результат в лог.",
+  "workflow": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "trigger.manual",
+        "name": "Manual Trigger",
+        "key": "trigger",
+        "params": { "runName": "Пример" },
+        "position": { "x": 40, "y": 200 }
+      },
+      {
+        "id": "http",
+        "type": "http.request",
+        "name": "Получить задачу",
+        "key": "http",
+        "params": {
+          "method": "GET",
+          "url": "https://jsonplaceholder.typicode.com/todos/1",
+          "query": [],
+          "headers": [],
+          "body": "",
+          "timeout": 15,
+          "failOnError": false
+        },
+        "position": { "x": 320, "y": 200 }
+      },
+      {
+        "id": "check",
+        "type": "logic.condition",
+        "name": "Статус 200?",
+        "key": "condition",
+        "params": { "variable": "{{http.status}}", "operator": "equals", "value": "200" },
+        "position": { "x": 600, "y": 200 }
+      },
+      {
+        "id": "delay",
+        "type": "utility.delay",
+        "name": "Пауза",
+        "key": "delay",
+        "params": { "duration": 1, "unit": "s" },
+        "position": { "x": 880, "y": 100 }
+      },
+      {
+        "id": "ok",
+        "type": "logging.logger",
+        "name": "Успех",
+        "key": "log_ok",
+        "params": {
+          "message": "Задача «{{http.body.title}}» получена за {{http.timeMs}} мс",
+          "level": "INFO",
+          "variables": [{ "key": "completed", "value": "{{http.body.completed}}", "enabled": true }]
+        },
+        "position": { "x": 1160, "y": 100 }
+      },
+      {
+        "id": "fail",
+        "type": "logging.logger",
+        "name": "Ошибка",
+        "key": "log_fail",
+        "params": { "message": "Сервер ответил статусом {{http.status}}", "level": "ERROR", "variables": [] },
+        "position": { "x": 880, "y": 320 }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "trigger", "sourceHandle": "out", "target": "http", "targetHandle": "in" },
+      { "id": "e2", "source": "http", "sourceHandle": "out", "target": "check", "targetHandle": "in" },
+      { "id": "e3", "source": "check", "sourceHandle": "true", "target": "delay", "targetHandle": "in" },
+      { "id": "e4", "source": "delay", "sourceHandle": "out", "target": "ok", "targetHandle": "in" },
+      { "id": "e5", "source": "check", "sourceHandle": "false", "target": "fail", "targetHandle": "in" }
+    ]
+  }
+}

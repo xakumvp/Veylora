@@ -41,18 +41,22 @@ Veylora — локальная визуальная платформа авто�
 - ✅ Несколько одновременных запусков с лимитом и защитой от дублей.
 - ✅ Фильтр истории по статусу, повторный запуск.
 
-### Phase 3 — Advanced Editor ⬜
-- Группы, Subflows (с ограничением глубины), Auto Layout, контекстное меню, Copy/Paste.
-- Шаблоны, версионирование Workflow (история, diff, откат), поиск по Workflow.
-- Inspector: JSON/Code Editor, Multi-select, Variable Picker с автодополнением.
+### Phase 3 — Advanced Editor 🚧
+- ✅ Auto Layout, контекстное меню, Copy/Paste (с сохранением связей и уникальными ключами переменных).
+- ✅ Встроенные шаблоны сценариев (NewWorkflowDialog), поиск по Workflow и нодам (Command Palette Ctrl+K/Ctrl+F).
+- ✅ Версионирование Workflow: история изменений, автоматические снимки при сохранении, визуальный diff, восстановление (откат), экспорт любой версии.
+- ✅ Subflows (Execute Workflow): ограничение глубины вызовов (до 5 уровней), защита от рекурсивных циклов, сквозные логи и проброс входных/выходных данных.
+- ⬜ Группы нод на холсте, Variable Picker с автодополнением в Inspector.
 
-### Phase 4 — Integrations ⬜
-- Telegram, Discord, Email, Generic Webhook, Desktop Notification.
-- SQLite / PostgreSQL / MySQL / Redis (подключения хранятся отдельно от Workflow).
-- Webhook Server (выключен по умолчанию, подпись, auth, rate limit, лимит размера).
-- HTTP Download/Upload, WebSocket, DNS, TCP, Ping, URL Parser.
-- Data Processing: JSON/XML/CSV, Regex, Date, Hash, Base64, Data Mapper.
-- Filesystem Nodes в пределах разрешённых каталогов.
+### Phase 4 — Integrations & Nodes 🚧
+- ✅ Обработка данных: JSON Parser, JSON Builder, Regex (поиск/замена/группы), Date / Time (форматирование, смещения), Hash Generator (MD5, SHA-1, SHA-256, SHA-512), Base64.
+- ✅ Утилиты: UUID v4, Random Value (числа в диапазоне, строки с наборами символов).
+- ✅ Уведомления: Telegram (Bot API), Discord (Webhooks).
+- ✅ Файловая система: Read File, Write File (с контролем разрешённых каталогов и защитой от Path Traversal).
+- ⬜ Встроенный Webhook Server (HTTP-сервер для триггеров по внешним вебхукам).
+- ⬜ Базы данных: SQLite, PostgreSQL, MySQL, Redis.
+- ⬜ Email (SMTP), Desktop Notifications.
+- ⬜ Сетевые утилиты: HTTP Download/Upload, WebSocket, Ping, TCP Check, DNS Lookup.
 
 ### Phase 5 — Plugin Ecosystem ⬜
 - Плагины как отдельные процессы с RPC, Manifest, разрешения, подпись пакетов.

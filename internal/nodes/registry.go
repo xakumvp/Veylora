@@ -14,12 +14,33 @@ const (
 	TypeCondition       = "logic.condition"
 	TypeStopWorkflow    = "logic.stop"
 	TypeSubflow         = "logic.subflow"
+	TypeJSONParse       = "data.json_parse"
+	TypeJSONBuild       = "data.json_build"
+	TypeRegex           = "data.regex"
+	TypeBase64          = "data.base64"
+	TypeHash            = "data.hash"
+	TypeDateTime        = "data.date"
+	TypeReadFile        = "fs.read"
+	TypeWriteFile       = "fs.write"
+	TypeTelegram        = "notification.telegram"
+	TypeDiscord         = "notification.discord"
+	TypeUUID            = "utility.uuid"
+	TypeRandom          = "utility.random"
 	TypeDelay           = "utility.delay"
 	TypeLogger          = "logging.logger"
 )
 
 // Categories in the Node Library, in display order.
-var Categories = []string{"Triggers", "HTTP", "Logic", "Utilities", "Logging"}
+var Categories = []string{
+	"Triggers",
+	"HTTP",
+	"Logic",
+	"Data Processing",
+	"Filesystem",
+	"Notifications",
+	"Utilities",
+	"Logging",
+}
 
 // Registry maps node types to their executors and (decorated) definitions.
 type Registry struct {
@@ -45,6 +66,18 @@ func NewRegistryWith(extra ...Executor) *Registry {
 		Condition{},
 		StopWorkflow{},
 		Subflow{},
+		JSONParse{},
+		JSONBuild{},
+		Regex{},
+		Base64{},
+		Hash{},
+		DateTime{},
+		ReadFile{},
+		WriteFile{},
+		Telegram{},
+		Discord{},
+		UUID{},
+		Random{},
 		Delay{},
 		Logger{},
 	}

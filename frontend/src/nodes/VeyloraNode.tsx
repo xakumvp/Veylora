@@ -84,6 +84,72 @@ function Summary({ type, params }: { type: string; params: Params }) {
       );
     case 'logic.subflow':
       return <SubflowSummary id={str(params, 'workflowId')} />;
+    case 'data.json_parse':
+      return (
+        <span className="truncate">
+          JSON: <span className="font-mono text-faint">{str(params, 'text') || '…'}</span>
+        </span>
+      );
+    case 'data.json_build':
+      return (
+        <span className="truncate">
+          Режим: <span className="text-faint">{str(params, 'mode', 'fields')}</span>
+        </span>
+      );
+    case 'data.regex':
+      return (
+        <span className="truncate font-mono">
+          /{str(params, 'pattern') || '…'}/ [{str(params, 'action', 'find')}]
+        </span>
+      );
+    case 'data.base64':
+      return (
+        <span className="truncate">
+          Base64 <span className="text-faint">{str(params, 'action', 'encode')}</span>
+        </span>
+      );
+    case 'data.hash':
+      return (
+        <span className="truncate">
+          Хеш: <span className="font-mono text-faint">{str(params, 'algorithm', 'sha256')}</span>
+        </span>
+      );
+    case 'data.date':
+      return (
+        <span className="truncate">
+          Формат: <span className="font-mono text-faint">{str(params, 'format', 'iso')}</span>
+        </span>
+      );
+    case 'utility.uuid':
+      return <span className="text-faint">Генерация UUID v4</span>;
+    case 'utility.random':
+      return (
+        <span className="truncate text-faint">
+          {str(params, 'kind', 'number') === 'number'
+            ? `Случайное число (${str(params, 'min', '1')}..${str(params, 'max', '100')})`
+            : `Случайная строка (${str(params, 'length', '16')} симв.)`}
+        </span>
+      );
+    case 'notification.telegram':
+      return (
+        <span className="truncate">
+          Telegram: <span className="font-mono text-faint">{str(params, 'chatId') || 'чат не задан'}</span>
+        </span>
+      );
+    case 'notification.discord':
+      return <span className="truncate text-faint">Discord Webhook</span>;
+    case 'fs.read':
+      return (
+        <span className="truncate">
+          Чтение: <span className="font-mono text-faint">{str(params, 'path') || 'путь не задан'}</span>
+        </span>
+      );
+    case 'fs.write':
+      return (
+        <span className="truncate">
+          Запись: <span className="font-mono text-faint">{str(params, 'path') || 'путь не задан'}</span>
+        </span>
+      );
     case 'logging.logger':
       return (
         <span className="truncate">

@@ -7,7 +7,16 @@ import { useEditor } from '../stores/editor';
 import { useWorkspace } from '../stores/workspace';
 import type { NodeDefinition } from '../types';
 
-const CATEGORY_ORDER = ['Triggers', 'HTTP', 'Logic', 'Utilities', 'Logging'];
+const CATEGORY_ORDER = [
+  'Triggers',
+  'HTTP',
+  'Logic',
+  'Data Processing',
+  'Filesystem',
+  'Notifications',
+  'Utilities',
+  'Logging',
+];
 
 function LibraryItem({ def, disabled }: { def: NodeDefinition; disabled: boolean }) {
   const color = categoryColor[def.category] ?? '#94a3b8';

@@ -20,8 +20,9 @@ import (
 const maxLogFileBytes = 5 << 20
 
 // Run starts the desktop application and blocks until the window is closed.
-func Run(assets embed.FS, version string) error {
+func Run(assets embed.FS, templates embed.FS, version string) error {
 	a := New(version)
+	a.templates = templates
 	return wails.Run(&options.App{
 		Title:            "Veylora",
 		Width:            1440,

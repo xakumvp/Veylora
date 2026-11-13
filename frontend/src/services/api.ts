@@ -15,6 +15,7 @@ import type {
   SaveResult,
   Settings,
   SettingsResult,
+  Template,
   TriggerInfo,
   VersionMeta,
   Workflow,
@@ -71,6 +72,10 @@ export const api = {
     Go.RestoreVersion(workflowId, versionId) as unknown as Promise<Workflow>,
   exportVersion: (workflowId: string, versionId: number) =>
     Go.ExportVersion(workflowId, versionId) as Promise<ExportResult | null>,
+
+  templates: () => Go.GetTemplates() as Promise<Template[]>,
+  createFromTemplate: (projectId: string, templateId: string, name: string) =>
+    Go.CreateWorkflowFromTemplate(projectId, templateId, name) as Promise<WorkflowMeta>,
 
   getSettings: () => Go.GetSettings() as Promise<Settings>,
   saveSettings: (s: Settings) => Go.SaveSettings(asGo(s)) as unknown as Promise<SettingsResult>,

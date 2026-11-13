@@ -22,6 +22,7 @@ func testApp(t *testing.T) *App {
 	a.ctx = context.Background()
 	a.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	a.engine = engine.New(a.reg, a.logger)
+	a.engine.Loader = storeLoader{a}
 	a.runs = engine.NewManager(a.engine)
 	s, err := storage.Open(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {
@@ -220,5 +221,22 @@ func TestVersionHistory(t *testing.T) {
 	list, _ := a.ListVersions(w.ID)
 	if len(list) != 3 || list[0].Source != "restore" || list[0].Nodes != 2 {
 		t.Fatalf("history after restore: %+v", list)
+	}
+}
+
+func TestTemplates(t *testing.T) {
+	a := testApp(t)
+	a.templates = os.DirFS(filepath.Join("..", ".."))
+	list := a.GetTemplates()
+	if len(list) < 3 {
+		t.Fatalf("want at least 3 templates, got %d", len(list))
+	}
+	p, _ := a.CreateProject("T")
+	w, err := a.CreateWorkflowFromTemplate(p.ID, list[0].ID, "")
+	if err != nil || w.Name != list[0].Name {
+		t.Fatalf("create from template: %+v %v", w, err)
+	}
+	if _, err := a.CreateWorkflowFromTemplate(p.ID, "../go.mod", ""); err == nil {
+		t.Fatal("path traversal in template id must be rejected")
 	}
 }

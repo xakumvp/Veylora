@@ -97,6 +97,36 @@ function KeyValueEditor({
   );
 }
 
+function WorkflowSelect({
+  value,
+  onChange,
+  invalid,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  invalid: boolean;
+}) {
+  const projects = useWorkspace((s) => s.projects);
+  const workflows = useWorkspace((s) => s.workflows);
+  const currentId = useEditor((s) => s.workflowId);
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid}>
+      <option value="">— выберите Workflow —</option>
+      {projects.map((p) => (
+        <optgroup key={p.id} label={p.name}>
+          {(workflows[p.id] ?? [])
+            .filter((w) => w.id !== currentId)
+            .map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+        </optgroup>
+      ))}
+    </Select>
+  );
+}
+
 function isOptional(spec: ParamSpec, params: Params, specs: ParamSpec[]): boolean {
   if (!spec.optionalWhen) return false;
   const dep = specs.find((s) => s.key === spec.optionalWhen!.param);
@@ -174,6 +204,9 @@ function ParamInput({
           <Toggle checked={Boolean(value)} onChange={set} label={spec.label} />
         </div>
       );
+    case 'workflow':
+      control = <WorkflowSelect value={str(params, spec.key)} onChange={set} invalid={!!error} />;
+      break;
     case 'keyvalue':
       control = (
         <KeyValueEditor rows={keyValues(params, spec.key)} onChange={set} templatable={spec.templatable} />

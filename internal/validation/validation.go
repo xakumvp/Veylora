@@ -241,7 +241,7 @@ func Params(doc workflow.Document, reg *nodes.Registry) []Issue {
 			raw, present := n.Params[spec.Key]
 			str := nodes.Str(n.Params, spec.Key, "")
 			switch spec.Kind {
-			case nodes.ParamString, nodes.ParamText:
+			case nodes.ParamString, nodes.ParamText, nodes.ParamWorkflow:
 				if spec.Required && strings.TrimSpace(str) == "" {
 					add(spec.Key, fmt.Sprintf("поле «%s» обязательно", spec.Label))
 				}

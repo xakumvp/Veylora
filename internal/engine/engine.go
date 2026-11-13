@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"veylora/internal/events"
 	"veylora/internal/execution"
 	"veylora/internal/nodes"
@@ -43,10 +45,17 @@ func (e *ValidationError) Error() string {
 // errNodeTimeout marks a node that exceeded its own timeout.
 var errNodeTimeout = errors.New("превышен таймаут Node")
 
+// WorkflowLoader loads saved workflows for Execute Workflow (subflow) nodes.
+type WorkflowLoader interface {
+	LoadWorkflow(ctx context.Context, id string) (name string, doc workflow.Document, err error)
+}
+
 // Engine runs workflows. It is stateless and safe for concurrent use.
 type Engine struct {
 	Registry *nodes.Registry
 	Logger   *slog.Logger
+	// Loader enables subflows; nil disables them.
+	Loader WorkflowLoader
 	// sleep is replaceable in tests.
 	sleep func(ctx context.Context, d time.Duration) error
 }
@@ -72,6 +81,8 @@ type Request struct {
 	Event         nodes.TriggerEvent
 	// EnvVars are the environment variables exposed as {{env.NAME}} (allow-listed).
 	EnvVars map[string]string
+	// CallStack lists the parent workflow IDs of a subflow run (outermost first).
+	CallStack []string
 }
 
 // Prepare validates the document and returns the execution order.
@@ -132,21 +143,44 @@ func (r *runState) log(level, nodeID, nodeName, msg string) {
 // Run executes the workflow synchronously and returns the final run event.
 // Cancel ctx to stop it; the node in progress is marked CANCELLED.
 func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEvent {
+	ev, _ := e.execute(ctx, req, sink)
+	return ev
+}
+
+// reservedRoots are engine-provided variables, excluded from subflow outputs.
+var reservedRoots = map[string]bool{"execution": true, "workflow": true, "variables": true, "env": true}
+
+func outputsOf(st *runState) map[string]any {
+	out := map[string]any{}
+	if st == nil {
+		return out
+	}
+	for k, v := range st.vars.Snapshot() {
+		if !reservedRoots[k] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// execute runs a workflow and also returns the node outputs (used by subflows).
+func (e *Engine) execute(ctx context.Context, req Request, sink Sink) (events.RunEvent, map[string]any) {
 	started := time.Now()
+	var st *runState
 	if req.Event.Source == "" {
 		req.Event.Source = nodes.TriggerManual
 	}
 	run := events.RunEvent{RunID: req.RunID, WorkflowID: req.WorkflowID, Status: events.StatusRunning,
 		Trigger: req.Event.Source, StartedAt: started.UnixMilli()}
 
-	finish := func(status, errMsg string) events.RunEvent {
+	finish := func(status, errMsg string) (events.RunEvent, map[string]any) {
 		end := time.Now()
 		run.Status = status
 		run.Error = errMsg
 		run.FinishedAt = end.UnixMilli()
 		run.DurationMs = end.Sub(started).Milliseconds()
 		sink.RunFinished(run)
-		return run
+		return run, outputsOf(st)
 	}
 
 	doc := req.Doc
@@ -158,7 +192,7 @@ func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEven
 	}
 	run.TriggerID = trigger.ID
 	sink.RunStarted(run)
-	st := &runState{req: req, vars: execution.NewContext(), redactor: execution.NewRedactor(), sink: sink}
+	st = &runState{req: req, vars: execution.NewContext(), redactor: execution.NewRedactor(), sink: sink}
 	if err != nil {
 		st.log(nodes.LevelError, "", "", err.Error())
 		return finish(events.StatusFailed, err.Error())
@@ -206,16 +240,18 @@ func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEven
 		if ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			msg := "превышен таймаут Workflow (" + humanDuration(time.Duration(doc.Settings.TimeoutSec*float64(time.Second))) + ")"
 			st.log(nodes.LevelError, "", "", "Выполнение прервано: "+msg)
-			return finish(events.StatusTimeout, msg), true
+			ev, _ := finish(events.StatusTimeout, msg)
+			return ev, true
 		}
 		st.log(nodes.LevelWarning, "", "", "Выполнение остановлено")
-		return finish(events.StatusCancelled, ""), true
+		ev, _ := finish(events.StatusCancelled, "")
+		return ev, true
 	}
 
 	for i, id := range order {
 		node := byID[id]
 		if ev, stop := interrupted(i); stop {
-			return ev
+			return ev, outputsOf(st)
 		}
 		if !active[id] {
 			sink.NodeUpdated(events.NodeEvent{RunID: req.RunID, NodeID: id, Status: events.StatusSkipped})
@@ -230,7 +266,7 @@ func (e *Engine) Run(ctx context.Context, req Request, sink Sink) events.RunEven
 		res, ev, nodeErr := e.runNode(runCtx, st, node, event)
 		if nodeErr != nil && runCtx.Err() != nil {
 			if evRun, stop := interrupted(i + 1); stop {
-				return evRun
+				return evRun, outputsOf(st)
 			}
 		}
 
@@ -336,6 +372,7 @@ func (e *Engine) runNode(ctx context.Context, st *runState, node workflow.Node, 
 		Redactor: st.redactor,
 		Env:      st.req.Env,
 		Event:    event,
+		Subflow:  e.subflowRunner(st),
 		Log: func(level, msg string, data map[string]any) {
 			var d any
 			if data != nil {
@@ -487,6 +524,8 @@ func sourceLabel(s string) string {
 		return "событие файловой системы"
 	case nodes.TriggerStartup:
 		return "запуск приложения"
+	case SourceSubflow:
+		return "вызов из другого Workflow"
 	}
 	return s
 }
@@ -549,4 +588,57 @@ func humanDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%d мин %d с", ms/60_000, (ms%60_000)/1000)
 	}
+}
+
+// SourceSubflow is the trigger source of a child run started by Execute Workflow.
+const SourceSubflow = "subflow"
+
+func (e *Engine) subflowRunner(st *runState) nodes.SubflowRunner {
+	if e.Loader == nil {
+		return nil
+	}
+	return func(ctx context.Context, workflowID string, input map[string]any) (nodes.SubflowResult, error) {
+		stack := append(append([]string{}, st.req.CallStack...), st.req.WorkflowID)
+		if len(stack) > nodes.MaxSubflowDepth {
+			return nodes.SubflowResult{}, fmt.Errorf("превышена максимальная глубина вложенности Subflow (%d)", nodes.MaxSubflowDepth)
+		}
+		for _, id := range stack {
+			if id == workflowID {
+				return nodes.SubflowResult{}, errors.New("рекурсивный вызов: Workflow не может вызывать сам себя (в том числе через другие Workflow)")
+			}
+		}
+		name, doc, err := e.Loader.LoadWorkflow(ctx, workflowID)
+		if err != nil {
+			return nodes.SubflowResult{}, errors.New("Workflow для запуска не найден — возможно, он удалён")
+		}
+		child := Request{
+			RunID:        st.req.RunID + "/" + uuid.NewString()[:8],
+			WorkflowID:   workflowID,
+			WorkflowName: name,
+			Doc:          doc,
+			Env:          st.req.Env,
+			EnvVars:      st.req.EnvVars,
+			Event:        nodes.TriggerEvent{Source: SourceSubflow, Data: map[string]any{"input": input, "parentExecutionId": st.req.RunID}},
+			CallStack:    stack,
+		}
+		ev, outputs := e.execute(ctx, child, &childSink{parent: st, name: name})
+		return nodes.SubflowResult{ExecutionID: child.RunID, Status: ev.Status, Error: ev.Error, Outputs: outputs, DurationMs: ev.DurationMs}, nil
+	}
+}
+
+// childSink forwards a subflow's log lines into the parent run.
+type childSink struct {
+	parent *runState
+	name   string
+}
+
+func (c *childSink) RunStarted(events.RunEvent)   {}
+func (c *childSink) RunFinished(events.RunEvent)  {}
+func (c *childSink) NodeUpdated(events.NodeEvent) {}
+func (c *childSink) Log(l events.Log) {
+	label := "↳ " + c.name
+	if l.NodeName != "" {
+		label += " / " + l.NodeName
+	}
+	c.parent.sink.Log(events.Log{RunID: c.parent.req.RunID, NodeName: label, Level: l.Level, Message: c.parent.redactor.String(l.Message), Data: l.Data, Timestamp: l.Timestamp})
 }

@@ -128,6 +128,8 @@ type Input struct {
 	Env      Env
 	// Event is set for the trigger node that started the run.
 	Event *TriggerEvent
+	// Subflow runs another workflow (Execute Workflow node); nil if unavailable.
+	Subflow SubflowRunner
 }
 
 // Result is what a successfully executed node produces.

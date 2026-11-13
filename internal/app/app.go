@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,6 +47,8 @@ type App struct {
 	emit events.Emitter
 	// notices are shown to the user once the GUI is ready (e.g. schedules that failed to restore).
 	notices []string
+	// templates holds examples/*.json embedded at build time.
+	templates fs.FS
 }
 
 // SaveResult is returned after saving a workflow.
@@ -77,6 +80,7 @@ func (a *App) startup(ctx context.Context) {
 	a.dataDir = dir
 	a.logger, a.logFile = newLogger(dir)
 	a.engine = engine.New(a.reg, a.logger)
+	a.engine.Loader = storeLoader{a}
 	a.runs = engine.NewManager(a.engine)
 
 	store, err := storage.Open(filepath.Join(dir, "veylora.db"))
@@ -353,4 +357,19 @@ func (a *App) SaveSettings(st storage.Settings) (SettingsResult, error) {
 	}
 	a.emitter().Emit(events.SchedulerChanged, "")
 	return SettingsResult{Settings: saved, Warnings: warnings}, nil
+}
+
+// storeLoader lets the engine load saved workflows for Execute Workflow nodes.
+type storeLoader struct{ app *App }
+
+func (l storeLoader) LoadWorkflow(ctx context.Context, id string) (string, workflow.Document, error) {
+	s, err := l.app.db()
+	if err != nil {
+		return "", workflow.Document{}, err
+	}
+	w, err := s.GetWorkflow(ctx, id)
+	if err != nil {
+		return "", workflow.Document{}, err
+	}
+	return w.Name, w.Document, nil
 }

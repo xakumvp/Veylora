@@ -19,6 +19,8 @@ export function CreateVersion(arg1:string,arg2:string):Promise<storage.VersionMe
 
 export function CreateWorkflow(arg1:string,arg2:string):Promise<storage.Workflow>;
 
+export function CreateWorkflowFromTemplate(arg1:string,arg2:string,arg3:string):Promise<storage.WorkflowMeta>;
+
 export function DeleteProject(arg1:string):Promise<void>;
 
 export function DeleteWorkflow(arg1:string):Promise<void>;
@@ -38,6 +40,8 @@ export function GetNodeDefinitions():Promise<Array<nodes.Definition>>;
 export function GetSettings():Promise<storage.Settings>;
 
 export function GetStartupNotices():Promise<Array<string>>;
+
+export function GetTemplates():Promise<Array<app.Template>>;
 
 export function GetTriggers(arg1:string):Promise<Array<scheduler.TriggerInfo>>;
 

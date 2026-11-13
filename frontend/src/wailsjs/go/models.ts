@@ -142,6 +142,26 @@ export namespace app {
 		    return a;
 		}
 	}
+	export class Template {
+	    id: string;
+	    name: string;
+	    description: string;
+	    nodes: number;
+	    triggers: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Template(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.nodes = source["nodes"];
+	        this.triggers = source["triggers"];
+	    }
+	}
 
 }
 

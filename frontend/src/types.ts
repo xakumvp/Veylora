@@ -17,7 +17,15 @@ export interface ParamOption {
   label: string;
 }
 
-export type ParamKind = 'string' | 'text' | 'number' | 'select' | 'keyvalue' | 'boolean';
+export type ParamKind = 'string' | 'text' | 'number' | 'select' | 'keyvalue' | 'boolean' | 'workflow';
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  nodes: number;
+  triggers: string[];
+}
 
 export interface ParamSpec {
   key: string;

@@ -82,6 +82,8 @@ function Summary({ type, params }: { type: string; params: Params }) {
           {str(params, 'message')}
         </span>
       );
+    case 'logic.subflow':
+      return <SubflowSummary id={str(params, 'workflowId')} />;
     case 'logging.logger':
       return (
         <span className="truncate">
@@ -91,6 +93,16 @@ function Summary({ type, params }: { type: string; params: Params }) {
     default:
       return null;
   }
+}
+
+function SubflowSummary({ id }: { id: string }) {
+  const name = useWorkspace(
+    (s) =>
+      Object.values(s.workflows)
+        .flat()
+        .find((w) => w.id === id)?.name,
+  );
+  return <span className="truncate">{id ? (name ?? 'Workflow удалён') : 'Workflow не выбран'}</span>;
 }
 
 function StatusBadge({ status, durationMs }: { status: string; durationMs?: number }) {

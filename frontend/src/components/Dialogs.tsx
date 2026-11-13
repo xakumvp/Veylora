@@ -7,6 +7,7 @@ import type { Settings } from '../types';
 import { CommandPalette } from './CommandPalette';
 import { ContextMenu } from './ContextMenu';
 import { Logo } from './icons';
+import { NewWorkflowDialog } from './NewWorkflowDialog';
 import { VersionsDialog } from './VersionsDialog';
 import { Button, cx, Input, Modal, Toggle } from './ui';
 
@@ -359,6 +360,7 @@ export function Overlays() {
       <AboutDialog />
       <ContextMenu />
       <VersionsDialog />
+      <NewWorkflowDialog />
       <CommandPalette />
       <Toasts />
     </>

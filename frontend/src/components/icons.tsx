@@ -11,6 +11,7 @@ import {
   Repeat,
   ScrollText,
   Timer,
+  Workflow,
   type LucideIcon,
   type LucideProps,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ const byName: Record<string, LucideIcon> = {
   'folder-search': FolderSearch,
   power: Power,
   'octagon-x': OctagonX,
+  workflow: Workflow,
 };
 
 /** Accent colour per category, used for node icons. */

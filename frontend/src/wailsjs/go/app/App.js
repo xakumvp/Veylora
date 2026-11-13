@@ -22,6 +22,10 @@ export function CreateWorkflow(arg1, arg2) {
   return window['go']['app']['App']['CreateWorkflow'](arg1, arg2);
 }
 
+export function CreateWorkflowFromTemplate(arg1, arg2, arg3) {
+  return window['go']['app']['App']['CreateWorkflowFromTemplate'](arg1, arg2, arg3);
+}
+
 export function DeleteProject(arg1) {
   return window['go']['app']['App']['DeleteProject'](arg1);
 }
@@ -60,6 +64,10 @@ export function GetSettings() {
 
 export function GetStartupNotices() {
   return window['go']['app']['App']['GetStartupNotices']();
+}
+
+export function GetTemplates() {
+  return window['go']['app']['App']['GetTemplates']();
 }
 
 export function GetTriggers(arg1) {

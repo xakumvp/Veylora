@@ -13,6 +13,7 @@ const (
 	TypeHTTPRequest     = "http.request"
 	TypeCondition       = "logic.condition"
 	TypeStopWorkflow    = "logic.stop"
+	TypeSubflow         = "logic.subflow"
 	TypeDelay           = "utility.delay"
 	TypeLogger          = "logging.logger"
 )
@@ -43,6 +44,7 @@ func NewRegistryWith(extra ...Executor) *Registry {
 		HTTPRequest{},
 		Condition{},
 		StopWorkflow{},
+		Subflow{},
 		Delay{},
 		Logger{},
 	}

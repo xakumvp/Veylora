@@ -14,11 +14,16 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Workflow templates offered in "New Workflow".
+//
+//go:embed examples/*.json
+var templates embed.FS
+
 // version is overridden at release build time: -ldflags "-X main.version=v0.1.0".
 var version = "0.2.0-dev"
 
 func main() {
-	if err := app.Run(assets, version); err != nil {
+	if err := app.Run(assets, templates, version); err != nil {
 		log.Fatal(err)
 	}
 }

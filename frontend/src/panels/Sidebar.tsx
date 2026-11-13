@@ -85,8 +85,7 @@ function ProjectGroup({ p }: { p: Project }) {
   const expanded = useWorkspace((s) => !!s.expanded[p.id]);
   const workflows = useWorkspace((s) => s.workflows[p.id]);
   const active = useWorkspace((s) => s.activeProjectId === p.id);
-  const { toggleProject, createWorkflow, renameProject, deleteProject, importWorkflow } =
-    useWorkspace.getState();
+  const { toggleProject, renameProject, deleteProject, importWorkflow } = useWorkspace.getState();
   const { askText, askConfirm } = useUI.getState();
 
   return (
@@ -113,13 +112,7 @@ function ProjectGroup({ p }: { p: Project }) {
             label="Новый Workflow"
             onClick={async (e) => {
               e.stopPropagation();
-              const name = await askText({
-                title: 'Новый Workflow',
-                label: 'Название',
-                initial: 'Новый Workflow',
-                confirmLabel: 'Создать',
-              });
-              if (name) await createWorkflow(p.id, name);
+              useUI.getState().setNewWorkflowFor(p.id);
             }}
           >
             <FilePlus2 size={12} />
@@ -184,7 +177,7 @@ export function Sidebar() {
   const projects = useWorkspace((s) => s.projects);
   const activeProjectId = useWorkspace((s) => s.activeProjectId);
   const version = useWorkspace((s) => s.info?.version?.replace(/-dev$/, '') ?? '');
-  const { createProject, createWorkflow } = useWorkspace.getState();
+  const { createProject } = useWorkspace.getState();
   const { askText, setSettingsOpen, setAboutOpen } = useUI.getState();
 
   const newWorkflow = async () => {
@@ -199,13 +192,7 @@ export function Sidebar() {
       if (name) await createProject(name);
       return;
     }
-    const name = await askText({
-      title: 'Новый Workflow',
-      label: 'Название',
-      initial: 'Новый Workflow',
-      confirmLabel: 'Создать',
-    });
-    if (name) await createWorkflow(projectId, name);
+    useUI.getState().setNewWorkflowFor(projectId);
   };
 
   return (

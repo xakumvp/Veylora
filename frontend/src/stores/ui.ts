@@ -43,6 +43,8 @@ interface UIState {
   contextMenu: ContextMenuState | null;
   paletteOpen: boolean;
   versionsOpen: boolean;
+  /** Project for which the New Workflow dialog is open. */
+  newWorkflowFor: string | null;
 
   toast: (kind: ToastKind, title: string, message?: string) => void;
   dismissToast: (id: number) => void;
@@ -56,6 +58,7 @@ interface UIState {
   openContextMenu: (m: ContextMenuState | null) => void;
   setPaletteOpen: (open: boolean) => void;
   setVersionsOpen: (open: boolean) => void;
+  setNewWorkflowFor: (projectId: string | null) => void;
 }
 
 let toastSeq = 0;
@@ -70,6 +73,7 @@ export const useUI = create<UIState>((set, get) => ({
   contextMenu: null,
   paletteOpen: false,
   versionsOpen: false,
+  newWorkflowFor: null,
 
   toast: (kind, title, message) => {
     const id = ++toastSeq;
@@ -103,6 +107,7 @@ export const useUI = create<UIState>((set, get) => ({
   openContextMenu: (contextMenu) => set({ contextMenu }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen, contextMenu: null }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
+  setNewWorkflowFor: (newWorkflowFor) => set({ newWorkflowFor }),
 }));
 
 export const toast = (kind: ToastKind, title: string, message?: string) =>

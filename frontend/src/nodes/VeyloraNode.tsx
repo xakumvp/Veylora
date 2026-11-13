@@ -148,6 +148,41 @@ function Summary({ type, params }: { type: string; params: Params }) {
       );
     case 'notification.discord':
       return <span className="truncate text-faint">Discord Webhook</span>;
+    case 'notification.email':
+      return (
+        <span className="truncate">
+          Email: <span className="font-mono text-faint">{str(params, 'to') || 'получатель не задан'}</span>
+        </span>
+      );
+    case 'db.sqlite': {
+      const mode = str(params, 'mode', 'query');
+      return (
+        <span className="truncate">
+          <span className="font-mono font-semibold text-accent">[{mode.toUpperCase()}]</span>{' '}
+          <span className="font-mono text-faint">{str(params, 'query') || 'SQL не задан'}</span>
+        </span>
+      );
+    }
+    case 'network.tcp_check': {
+      const host = str(params, 'host') || 'хост не задан';
+      const port = str(params, 'port', '80');
+      return (
+        <span className="truncate font-mono text-faint">
+          TCP {host}:{port}
+        </span>
+      );
+    }
+    case 'network.dns': {
+      const rt = str(params, 'recordType', 'A');
+      const domain = str(params, 'domain') || 'домен не задан';
+      return (
+        <span className="truncate font-mono text-faint">
+          DNS [{rt}] {domain}
+        </span>
+      );
+    }
+    case 'network.url_parse':
+      return <span className="truncate font-mono text-faint">URL: {str(params, 'url') || '…'}</span>;
     case 'fs.read':
       return (
         <span className="truncate">

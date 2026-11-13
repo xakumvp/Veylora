@@ -10,10 +10,12 @@ import type { NodeDefinition } from '../types';
 const CATEGORY_ORDER = [
   'Triggers',
   'HTTP',
+  'Network',
   'Logic',
   'Data Processing',
   'Filesystem',
   'Notifications',
+  'Database',
   'Utilities',
   'Logging',
 ];

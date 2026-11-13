@@ -5,6 +5,7 @@ import {
   Braces,
   Calendar,
   CalendarClock,
+  Database,
   Dices,
   FilePenLine,
   FileText,
@@ -13,7 +14,9 @@ import {
   GitBranch,
   Globe,
   Hash,
+  Mail,
   MessageSquare,
+  Network,
   OctagonX,
   Play,
   Power,
@@ -53,16 +56,21 @@ const byName: Record<string, LucideIcon> = {
   'file-text': FileText,
   'file-pen': FilePenLine,
   webhook: Webhook,
+  database: Database,
+  network: Network,
+  mail: Mail,
 };
 
 /** Accent colour per category, used for node icons. */
 export const categoryColor: Record<string, string> = {
   Triggers: '#3ecf8e',
   HTTP: '#5aa7f5',
+  Network: '#06b6d4',
   Logic: '#f5b83d',
   'Data Processing': '#38bdf8',
   Filesystem: '#f97316',
   Notifications: '#ec4899',
+  Database: '#8b5cf6',
   Utilities: '#a78bfa',
   Logging: '#94a3b8',
 };

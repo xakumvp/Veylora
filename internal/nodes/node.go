@@ -205,6 +205,14 @@ func Num(params map[string]any, key string) (float64, bool) {
 	}
 }
 
+// NumDefault reads a numeric parameter with a fallback.
+func NumDefault(params map[string]any, key string, def float64) float64 {
+	if v, ok := Num(params, key); ok {
+		return v
+	}
+	return def
+}
+
 // Bool reads a boolean parameter.
 func Bool(params map[string]any, key string, def bool) bool {
 	v, ok := params[key]

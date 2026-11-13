@@ -73,6 +73,16 @@ function Summary({ type, params }: { type: string; params: Params }) {
       );
     case 'trigger.startup':
       return <span>при запуске Veylora</span>;
+    case 'trigger.webhook': {
+      const ep = str(params, 'endpoint', 'webhook');
+      const method = str(params, 'method', 'POST');
+      return (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="rounded bg-success/15 px-1 font-semibold text-success">{method}</span>
+          <span className="truncate font-mono text-faint">/webhook/{ep}</span>
+        </span>
+      );
+    }
     case 'logic.stop':
       return (
         <span className="truncate">

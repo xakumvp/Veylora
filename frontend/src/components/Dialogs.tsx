@@ -125,6 +125,49 @@ function SettingsDialog() {
       }
     >
       <div className="flex flex-col gap-5">
+        <div className="bg-surface/50 flex flex-col gap-3 rounded-lg border border-line p-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[13px] font-medium">Сервер вебхуков (Webhook Server)</div>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Принимает входящие HTTP-запросы для нод Webhook Trigger по адресу{' '}
+                <span className="text-text font-mono">
+                  http://{draft.webhookHost || '127.0.0.1'}:{draft.webhookPort || 5678}/webhook/:endpoint
+                </span>
+              </p>
+            </div>
+            <Toggle
+              checked={draft.webhookEnabled}
+              onChange={(v) => setDraft({ ...draft, webhookEnabled: v })}
+              label="Включить сервер вебхуков"
+            />
+          </div>
+          {draft.webhookEnabled && (
+            <div className="mt-1 flex items-center gap-4">
+              <label className="flex items-center gap-2">
+                <span className="text-xs text-muted">Хост:</span>
+                <Input
+                  className="w-32"
+                  value={draft.webhookHost || '127.0.0.1'}
+                  onChange={(e) => setDraft({ ...draft, webhookHost: e.target.value })}
+                  mono
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <span className="text-xs text-muted">Порт:</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="w-24"
+                  value={draft.webhookPort || 5678}
+                  onChange={(e) => setDraft({ ...draft, webhookPort: Number(e.target.value) })}
+                  mono
+                />
+              </label>
+            </div>
+          )}
+        </div>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-[13px] font-medium">Доступ к локальной сети</div>

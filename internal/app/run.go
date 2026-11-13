@@ -11,6 +11,7 @@ import (
 	"veylora/internal/events"
 	"veylora/internal/nodes"
 	"veylora/internal/storage"
+	"veylora/internal/webhook"
 	"veylora/internal/workflow"
 )
 
@@ -99,6 +100,39 @@ func (a *App) fireTrigger(workflowID, nodeID string, ev nodes.TriggerEvent) {
 		a.logger.Warn("trigger skipped", "workflow", workflowID, "node", nodeID, "source", ev.Source, "level", level, "error", err)
 		a.emitter().Emit(events.TriggerSkipped, map[string]any{"workflowId": workflowID, "nodeId": nodeID, "reason": err.Error()})
 	}
+}
+
+// fireWebhookTrigger handles an incoming HTTP webhook request by starting the target workflow run.
+func (a *App) fireWebhookTrigger(workflowID, nodeID string, req webhook.Request) (string, error) {
+	s, err := a.db()
+	if err != nil {
+		return "", err
+	}
+	ctx := context.Background()
+	w, err := s.GetWorkflow(ctx, workflowID)
+	if err != nil {
+		return "", err
+	}
+	if !w.Active {
+		return "", errors.New("workflow не активен")
+	}
+	ev := nodes.TriggerEvent{
+		Source: nodes.TriggerWebhook,
+		Data: map[string]any{
+			"endpoint": req.Endpoint,
+			"path":     "/webhook/" + req.Endpoint,
+			"method":   req.Method,
+			"headers":  req.Headers,
+			"query":    req.Query,
+			"body":     req.Body,
+			"rawBody":  req.RawBody,
+			"ip":       req.RemoteIP,
+		},
+	}
+	if err := s.RecordTriggerFired(ctx, workflowID, nodeID, time.Now().UnixMilli()); err != nil {
+		a.logger.Warn("record webhook trigger", "error", err)
+	}
+	return a.startRun(w.WorkflowMeta, w.Document, nodeID, ev)
 }
 
 // StopRun cancels one run. Returns false if it is not running.

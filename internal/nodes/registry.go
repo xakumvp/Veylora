@@ -10,6 +10,7 @@ const (
 	TypeScheduleTrigger = "trigger.schedule"
 	TypeFileTrigger     = "trigger.file"
 	TypeStartupTrigger  = "trigger.startup"
+	TypeWebhookTrigger  = "trigger.webhook"
 	TypeHTTPRequest     = "http.request"
 	TypeCondition       = "logic.condition"
 	TypeStopWorkflow    = "logic.stop"
@@ -62,6 +63,7 @@ func NewRegistryWith(extra ...Executor) *Registry {
 		ScheduleTrigger{},
 		FileTrigger{},
 		StartupTrigger{},
+		WebhookTrigger{},
 		HTTPRequest{},
 		Condition{},
 		StopWorkflow{},

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ type TriggerInfo struct {
 }
 
 // ErrNoAutomaticTriggers is returned when activating a workflow without automatic triggers.
-var ErrNoAutomaticTriggers = errors.New("в Workflow нет автоматических триггеров (Cron, Interval, Schedule, File Watcher, Application Startup)")
+var ErrNoAutomaticTriggers = errors.New("в Workflow нет автоматических триггеров (Cron, Interval, Schedule, File Watcher, Application Startup, Webhook)")
 
 type registration struct {
 	cancel   context.CancelFunc
@@ -325,6 +326,16 @@ func (s *Scheduler) planFor(workflowID string, n workflow.Node, kind string, all
 		}
 	case nodes.TriggerStartup:
 		p.run = func(context.Context, *TriggerInfo) {}
+	case nodes.TriggerWebhook:
+		ep := strings.TrimSpace(nodes.Str(n.Params, "endpoint", ""))
+		if ep == "" {
+			return p, errors.New("эндпоинт вебхука не может быть пустым")
+		}
+		method := nodes.Str(n.Params, "method", "POST")
+		p.run = func(ctx context.Context, info *TriggerInfo) {
+			s.setDetail(info, fmt.Sprintf("%s /webhook/%s", method, ep))
+			<-ctx.Done()
+		}
 	default:
 		return p, fmt.Errorf("неизвестный тип триггера %q", kind)
 	}

@@ -318,12 +318,24 @@ type Settings struct {
 	MaxConcurrentRuns  int      `json:"maxConcurrentRuns"`
 	AllowedDirectories []string `json:"allowedDirectories"`
 	AllowedEnvVars     []string `json:"allowedEnvVars"`
+	WebhookEnabled     bool     `json:"webhookEnabled"`
+	WebhookPort        int      `json:"webhookPort"`
+	WebhookHost        string   `json:"webhookHost"`
 }
 
 // DefaultSettings returns the defaults used on first launch.
 func DefaultSettings() Settings {
-	return Settings{AllowLocalNetwork: false, MaxResponseMB: 5, KeepExecutions: 50, MaxConcurrentRuns: 4,
-		AllowedDirectories: []string{}, AllowedEnvVars: []string{}}
+	return Settings{
+		AllowLocalNetwork:  false,
+		MaxResponseMB:      5,
+		KeepExecutions:     50,
+		MaxConcurrentRuns:  4,
+		AllowedDirectories: []string{},
+		AllowedEnvVars:     []string{},
+		WebhookEnabled:     false,
+		WebhookPort:        5678,
+		WebhookHost:        "127.0.0.1",
+	}
 }
 
 func cleanList(in []string, limit int) []string {
@@ -363,6 +375,13 @@ func (st Settings) Clamp() Settings {
 	if st.MaxConcurrentRuns > 16 {
 		st.MaxConcurrentRuns = 16
 	}
+	if st.WebhookPort < 1024 || st.WebhookPort > 65535 {
+		st.WebhookPort = 5678
+	}
+	st.WebhookHost = strings.TrimSpace(st.WebhookHost)
+	if st.WebhookHost == "" {
+		st.WebhookHost = "127.0.0.1"
+	}
 	st.AllowedDirectories = cleanList(st.AllowedDirectories, 50)
 	st.AllowedEnvVars = cleanList(st.AllowedEnvVars, 100)
 	return st
@@ -400,6 +419,14 @@ func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 			_ = json.Unmarshal([]byte(v), &st.AllowedDirectories)
 		case "allowedEnvVars":
 			_ = json.Unmarshal([]byte(v), &st.AllowedEnvVars)
+		case "webhookEnabled":
+			st.WebhookEnabled = v == "true"
+		case "webhookPort":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				st.WebhookPort = n
+			}
+		case "webhookHost":
+			st.WebhookHost = v
 		}
 	}
 	return st.Clamp(), rows.Err()
@@ -422,6 +449,9 @@ func (s *Store) SaveSettings(ctx context.Context, st Settings) (Settings, error)
 		"maxConcurrentRuns":  strconv.Itoa(st.MaxConcurrentRuns),
 		"allowedDirectories": string(dirs),
 		"allowedEnvVars":     string(envs),
+		"webhookEnabled":     strconv.FormatBool(st.WebhookEnabled),
+		"webhookPort":        strconv.Itoa(st.WebhookPort),
+		"webhookHost":        st.WebhookHost,
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
 			return st, err

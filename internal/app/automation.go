@@ -7,9 +7,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"veylora/internal/events"
+	"veylora/internal/nodes"
 	"veylora/internal/scheduler"
 	"veylora/internal/storage"
 	"veylora/internal/validation"
+	"veylora/internal/webhook"
+	"veylora/internal/workflow"
 )
 
 // ActivationResult is returned when automatic triggers are switched on or off.
@@ -34,6 +37,9 @@ func (a *App) SetWorkflowActive(workflowID string, active bool) (ActivationResul
 	}
 	if !active {
 		a.sched.Deactivate(workflowID)
+		if a.webhooks != nil {
+			a.webhooks.UnregisterWorkflow(workflowID)
+		}
 		if err := s.SetWorkflowActive(a.ctx, workflowID, false); err != nil {
 			return ActivationResult{}, a.userError("отключение", err)
 		}
@@ -60,6 +66,7 @@ func (a *App) SetWorkflowActive(workflowID string, active bool) (ActivationResul
 		a.sched.Deactivate(workflowID)
 		return ActivationResult{}, a.userError("активация", err)
 	}
+	a.syncWebhooks(workflowID, w.Document, true)
 	a.emitter().Emit(events.SchedulerChanged, workflowID)
 	return ActivationResult{Active: true, Triggers: triggers}, nil
 }
@@ -101,8 +108,13 @@ func (a *App) restoreSchedules(ctx context.Context) []string {
 		if _, err := a.sched.Activate(id, w.Document, st.AllowedDirectories); err != nil {
 			a.logger.Warn("restore schedule failed", "workflow", id, "error", err)
 			a.sched.Deactivate(id)
+			if a.webhooks != nil {
+				a.webhooks.UnregisterWorkflow(id)
+			}
 			_ = a.store.SetWorkflowActive(ctx, id, false)
 			problems = append(problems, fmt.Sprintf("«%s» отключён: %v", w.Name, err))
+		} else {
+			a.syncWebhooks(id, w.Document, true)
 		}
 	}
 	return problems
@@ -120,6 +132,9 @@ func (a *App) rearm(workflowID string) string {
 	}
 	disable := func(reason string) string {
 		a.sched.Deactivate(workflowID)
+		if a.webhooks != nil {
+			a.webhooks.UnregisterWorkflow(workflowID)
+		}
 		_ = a.store.SetWorkflowActive(a.ctx, workflowID, false)
 		a.emitter().Emit(events.SchedulerChanged, workflowID)
 		return "Автоматизация отключена: " + reason
@@ -130,6 +145,53 @@ func (a *App) rearm(workflowID string) string {
 	if _, err := a.sched.Activate(workflowID, w.Document, st.AllowedDirectories); err != nil {
 		return disable(err.Error())
 	}
+	a.syncWebhooks(workflowID, w.Document, true)
 	a.emitter().Emit(events.SchedulerChanged, workflowID)
 	return ""
+}
+
+// syncWebhooks registers or unregisters all webhook trigger nodes of a workflow.
+func (a *App) syncWebhooks(workflowID string, doc workflow.Document, active bool) {
+	if a.webhooks == nil {
+		return
+	}
+	a.webhooks.UnregisterWorkflow(workflowID)
+	if !active {
+		return
+	}
+	for _, n := range doc.Nodes {
+		if n.Type == nodes.TypeWebhookTrigger {
+			ep, _ := n.Params["endpoint"].(string)
+			method, _ := n.Params["method"].(string)
+			authMode, _ := n.Params["authMode"].(string)
+			secret, _ := n.Params["secret"].(string)
+			headerName, _ := n.Params["headerName"].(string)
+			respCode := 200
+			switch c := n.Params["responseCode"].(type) {
+			case float64:
+				if c > 0 {
+					respCode = int(c)
+				}
+			case int:
+				if c > 0 {
+					respCode = c
+				}
+			}
+			respBody, _ := n.Params["responseBody"].(string)
+
+			if err := a.webhooks.Register(webhook.Registration{
+				WorkflowID:   workflowID,
+				NodeID:       n.ID,
+				Endpoint:     ep,
+				Method:       method,
+				AuthMode:     authMode,
+				Secret:       secret,
+				HeaderName:   headerName,
+				ResponseCode: respCode,
+				ResponseBody: respBody,
+			}); err != nil {
+				a.logger.Warn("webhook register failed", "workflow", workflowID, "node", n.ID, "error", err)
+			}
+		}
+	}
 }

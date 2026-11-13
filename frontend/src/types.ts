@@ -53,7 +53,7 @@ export interface NodeDefinition {
   outputs: Port[];
   params: ParamSpec[];
   outputDoc: { name: string; description: string }[];
-  trigger?: 'manual' | 'cron' | 'interval' | 'schedule' | 'file' | 'startup';
+  trigger?: 'manual' | 'cron' | 'interval' | 'schedule' | 'file' | 'startup' | 'webhook';
 }
 
 export type OnError = 'stop' | 'continue' | 'error_output';
@@ -200,6 +200,27 @@ export interface Settings {
   maxConcurrentRuns: number;
   allowedDirectories: string[];
   allowedEnvVars: string[];
+  webhookEnabled: boolean;
+  webhookPort: number;
+  webhookHost: string;
+}
+
+export interface WebhookRegistration {
+  workflowId: string;
+  nodeId: string;
+  endpoint: string;
+  method: string;
+  authMode: string;
+  secret: string;
+  headerName: string;
+  responseCode: number;
+  responseBody: string;
+}
+
+export interface WebhookServerInfo {
+  running: boolean;
+  address: string;
+  endpoints: WebhookRegistration[];
 }
 
 export interface TriggerInfo {

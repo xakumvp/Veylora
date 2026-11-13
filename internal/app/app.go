@@ -18,6 +18,7 @@ import (
 	"veylora/internal/scheduler"
 	"veylora/internal/storage"
 	"veylora/internal/validation"
+	"veylora/internal/webhook"
 	"veylora/internal/workflow"
 )
 
@@ -43,6 +44,7 @@ type App struct {
 	engine  *engine.Engine
 	runs    *engine.Manager
 	sched   *scheduler.Scheduler
+	webhooks *webhook.Server
 	// emit overrides the Wails emitter (tests).
 	emit events.Emitter
 	// notices are shown to the user once the GUI is ready (e.g. schedules that failed to restore).
@@ -100,6 +102,7 @@ func (a *App) startup(ctx context.Context) {
 		a.runs.SetMaxConcurrent(st.MaxConcurrentRuns)
 	}
 	a.initScheduler()
+	a.initWebhooks(ctx)
 	a.notices = append(a.notices, a.restoreSchedules(ctx)...)
 	a.sched.FireStartup()
 	a.logger.Info("startup", "version", a.version, "dataDir", dir)
@@ -110,6 +113,17 @@ func (a *App) initScheduler() {
 		at, _ := a.store.TriggerLastFired(context.Background(), wf, node)
 		return at
 	}, a.logger)
+}
+
+func (a *App) initWebhooks(ctx context.Context) {
+	a.webhooks = webhook.New(a.logger)
+	a.webhooks.SetTriggerHandler(a.fireWebhookTrigger)
+	if st, err := a.store.GetSettings(ctx); err == nil && st.WebhookEnabled {
+		if err := a.webhooks.Start(st.WebhookHost, st.WebhookPort); err != nil {
+			a.logger.Error("start webhook server", "error", err)
+			a.notices = append(a.notices, fmt.Sprintf("Не удалось запустить Webhook-сервер: %v", err))
+		}
+	}
 }
 
 // GetStartupNotices returns (once) messages produced while the app was starting.
@@ -123,6 +137,13 @@ func (a *App) GetStartupNotices() []string {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.webhooks != nil && a.webhooks.IsRunning() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), webhook.ServerShutdownWait)
+		if err := a.webhooks.Stop(stopCtx); err != nil {
+			a.logger.Warn("stop webhook server", "error", err)
+		}
+		cancel()
+	}
 	if a.sched != nil {
 		a.sched.Stop()
 	}
@@ -237,6 +258,9 @@ func (a *App) DeleteProject(id string) error {
 	}
 	for _, w := range wfs {
 		a.sched.Deactivate(w.ID)
+		if a.webhooks != nil {
+			a.webhooks.UnregisterWorkflow(w.ID)
+		}
 	}
 	return a.userError("удаление проекта", s.DeleteProject(a.ctx, id))
 }
@@ -314,6 +338,9 @@ func (a *App) DeleteWorkflow(id string) error {
 		return errors.New("сначала остановите выполнение этого Workflow")
 	}
 	a.sched.Deactivate(id)
+	if a.webhooks != nil {
+		a.webhooks.UnregisterWorkflow(id)
+	}
 	return a.userError("удаление Workflow", s.DeleteWorkflow(a.ctx, id))
 }
 
@@ -351,12 +378,53 @@ func (a *App) SaveSettings(st storage.Settings) (SettingsResult, error) {
 		return SettingsResult{Settings: st}, a.userError("сохранение настроек", err)
 	}
 	a.runs.SetMaxConcurrent(saved.MaxConcurrentRuns)
-	warnings := a.restoreSchedules(a.ctx)
+	var warnings []string
+	if a.webhooks != nil {
+		if saved.WebhookEnabled {
+			// Restart listener if it was stopped or listening on different host/port
+			needStart := !a.webhooks.IsRunning()
+			if a.webhooks.IsRunning() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), webhook.ServerShutdownWait)
+				_ = a.webhooks.Stop(stopCtx)
+				cancel()
+				needStart = true
+			}
+			if needStart {
+				if err := a.webhooks.Start(saved.WebhookHost, saved.WebhookPort); err != nil {
+					warnings = append(warnings, fmt.Sprintf("Не удалось запустить Webhook-сервер: %v", err))
+				}
+			}
+		} else if a.webhooks.IsRunning() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), webhook.ServerShutdownWait)
+			_ = a.webhooks.Stop(stopCtx)
+			cancel()
+		}
+	}
+	warnings = append(warnings, a.restoreSchedules(a.ctx)...)
 	if warnings == nil {
 		warnings = []string{}
 	}
 	a.emitter().Emit(events.SchedulerChanged, "")
 	return SettingsResult{Settings: saved, Warnings: warnings}, nil
+}
+
+// WebhookServerInfo summarizes the webhook listener state for the GUI.
+type WebhookServerInfo struct {
+	Running   bool                   `json:"running"`
+	Address   string                 `json:"address"`
+	Endpoints []webhook.Registration `json:"endpoints"`
+}
+
+// GetWebhookInfo returns current webhook server status and registered endpoints.
+func (a *App) GetWebhookInfo() WebhookServerInfo {
+	if a.webhooks == nil {
+		return WebhookServerInfo{Endpoints: []webhook.Registration{}}
+	}
+	return WebhookServerInfo{
+		Running:   a.webhooks.IsRunning(),
+		Address:   a.webhooks.Addr(),
+		Endpoints: a.webhooks.Endpoints(),
+	}
 }
 
 // storeLoader lets the engine load saved workflows for Execute Workflow nodes.

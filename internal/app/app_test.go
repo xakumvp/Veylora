@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"veylora/internal/engine"
 	"veylora/internal/events"
@@ -32,7 +35,13 @@ func testApp(t *testing.T) *App {
 	a.store = s
 	a.emit = events.NopEmitter{}
 	a.initScheduler()
+	a.initWebhooks(a.ctx)
 	t.Cleanup(a.sched.Stop)
+	t.Cleanup(func() {
+		if a.webhooks != nil && a.webhooks.IsRunning() {
+			_ = a.webhooks.Stop(context.Background())
+		}
+	})
 	return a
 }
 
@@ -238,5 +247,120 @@ func TestTemplates(t *testing.T) {
 	}
 	if _, err := a.CreateWorkflowFromTemplate(p.ID, "../go.mod", ""); err == nil {
 		t.Fatal("path traversal in template id must be rejected")
+	}
+}
+
+func TestAppWebhookFlow(t *testing.T) {
+	a := testApp(t)
+	p, err := a.CreateProject("Webhook Proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := a.CreateWorkflow(p.ID, "Webhook Flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := workflow.Document{
+		SchemaVersion: workflow.SchemaVersion,
+		Nodes: []workflow.Node{
+			{
+				ID:   "hook1",
+				Type: "trigger.webhook",
+				Name: "Incoming Webhook",
+				Key:  "trigger",
+				Params: map[string]any{
+					"endpoint":     "test-alert",
+					"method":       "POST",
+					"authMode":     "none",
+					"responseCode": 200,
+					"responseBody": `{"status":"accepted","run":"{{runId}}"}`,
+				},
+				Position: workflow.Position{X: 100, Y: 100},
+			},
+			{
+				ID:   "log1",
+				Type: "logging.logger",
+				Name: "Log Event",
+				Key:  "log",
+				Params: map[string]any{
+					"message": "Received: {{trigger.rawBody}}",
+					"level":   "INFO",
+				},
+				Position: workflow.Position{X: 300, Y: 100},
+			},
+		},
+		Edges: []workflow.Edge{
+			{ID: "e1", Source: "hook1", SourceHandle: "out", Target: "log1", TargetHandle: "in"},
+		},
+	}
+	if _, err := a.SaveWorkflow(w.ID, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Activate workflow
+	act, err := a.SetWorkflowActive(w.ID, true)
+	if err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if !act.Active {
+		t.Fatal("workflow should be active")
+	}
+
+	info := a.GetWebhookInfo()
+	if len(info.Endpoints) != 1 || info.Endpoints[0].Endpoint != "test-alert" {
+		t.Fatalf("expected endpoint test-alert registered, got %+v", info.Endpoints)
+	}
+
+	// 2. Enable webhook server
+	st, err := a.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.WebhookEnabled = true
+	st.WebhookPort = 15678
+	st.WebhookHost = "127.0.0.1"
+	if _, err := a.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+
+	info = a.GetWebhookInfo()
+	if !info.Running {
+		t.Fatalf("webhook server should be running, info: %+v", info)
+	}
+
+	// 3. Post to webhook
+	reqBody := `{"event":"deploy","env":"prod"}`
+	resp, err := http.Post("http://127.0.0.1:15678/webhook/test-alert", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("post webhook: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(bodyBytes), `"status":"accepted"`) {
+		t.Fatalf("unexpected response body: %s", string(bodyBytes))
+	}
+
+	// Wait briefly for engine execution to finish
+	time.Sleep(150 * time.Millisecond)
+
+	// Check executions list
+	runs, err := a.ListExecutions(w.ID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("expected 1 execution recorded, got %d (err: %v)", len(runs), err)
+	}
+	if runs[0].Trigger != "webhook" {
+		t.Fatalf("expected trigger source webhook, got %s", runs[0].Trigger)
+	}
+
+	// 4. Deactivate workflow
+	if _, err := a.SetWorkflowActive(w.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	info = a.GetWebhookInfo()
+	if len(info.Endpoints) != 0 {
+		t.Fatalf("expected 0 endpoints after deactivation, got %d", len(info.Endpoints))
 	}
 }

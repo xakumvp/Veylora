@@ -22,6 +22,7 @@ import {
   ScrollText,
   Send,
   Timer,
+  Webhook,
   Workflow,
   type LucideIcon,
   type LucideProps,
@@ -51,6 +52,7 @@ const byName: Record<string, LucideIcon> = {
   'message-square': MessageSquare,
   'file-text': FileText,
   'file-pen': FilePenLine,
+  webhook: Webhook,
 };
 
 /** Accent colour per category, used for node icons. */

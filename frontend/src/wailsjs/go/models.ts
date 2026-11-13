@@ -472,6 +472,9 @@ export namespace storage {
 	    maxConcurrentRuns: number;
 	    allowedDirectories: string[];
 	    allowedEnvVars: string[];
+	    webhookEnabled: boolean;
+	    webhookPort: number;
+	    webhookHost: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -485,6 +488,9 @@ export namespace storage {
 	        this.maxConcurrentRuns = source["maxConcurrentRuns"];
 	        this.allowedDirectories = source["allowedDirectories"];
 	        this.allowedEnvVars = source["allowedEnvVars"];
+	        this.webhookEnabled = source["webhookEnabled"];
+	        this.webhookPort = source["webhookPort"];
+	        this.webhookHost = source["webhookHost"];
 	    }
 	}
 	export class VersionMeta {

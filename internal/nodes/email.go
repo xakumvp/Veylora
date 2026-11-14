@@ -187,7 +187,7 @@ func (EmailNode) Execute(ctx context.Context, in *Input) (Result, error) {
 		return Result{}, errors.New("список получателей пуст")
 	}
 
-	targetAddr := fmt.Sprintf("%s:%d", host, port)
+	targetAddr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	in.Log(LevelDebug, fmt.Sprintf("Отправка Email: %s -> %v через %s", from, recipients, targetAddr), nil)
 
 	// Build MIME message
